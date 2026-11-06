@@ -41,8 +41,9 @@ COPY src/ /app/src/
 COPY entrypoint.sh /entrypoint.sh
 COPY scripts/loket-user /usr/local/sbin/loket-user
 COPY scripts/sudoers-loket /etc/sudoers.d/loket
+COPY scripts/loket-banner /usr/local/sbin/loket-banner
 
-RUN chmod 0755 /entrypoint.sh /usr/local/sbin/loket-user \
+RUN chmod 0755 /entrypoint.sh /usr/local/sbin/loket-user /usr/local/sbin/loket-banner \
  && chown root:root /usr/local/sbin/loket-user /etc/sudoers.d/loket \
  && chmod 0440 /etc/sudoers.d/loket \
  && visudo -cf /etc/sudoers.d/loket \

@@ -1,0 +1,67 @@
+#!/bin/bash
+# loket-banner — poster-style ASCII for the SSH pre-auth banner and the MOTD.
+#
+#   loket-banner banner   → plain text, safe for any SSH client (no ANSI)
+#   loket-banner motd     → same poster + quick commands
+#
+# Note: printf's %-*s pads by BYTES and the block art is multi-byte UTF-8, so
+# every row is padded by character count (bash ${#var}) instead.
+set -u
+export LC_ALL="${LC_ALL:-C.UTF-8}"
+
+MODE="${1:-banner}"
+HOST="${LOKET_HOST:-${PUBLIC_HOST:-$(hostname 2>/dev/null || echo loket)}}"
+PORT="${SSH_PORT:-22}"
+USER_COUNT="${LOKET_USERS:-}"
+
+ART=' ██╗      ██████╗ ██╗  ██╗███████╗████████╗
+ ██║     ██╔═══██╗██║ ██╔╝██╔════╝╚══██╔══╝
+ ██║     ██║   ██║█████╔╝ █████╗     ██║
+ ██║     ██║   ██║██╔═██╗ ██╔══╝     ██║
+ ███████╗╚██████╔╝██║  ██╗███████╗   ██║
+ ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝   ╚═╝'
+
+# Frame width = widest art row, measured in characters (not bytes).
+W=0
+while IFS= read -r l; do
+  [ "${#l}" -gt "$W" ] && W="${#l}"
+done <<< "$ART"
+
+rule() { # $1 = left, $2 = fill, $3 = right
+  printf '%s' "$1"
+  printf "$2%.0s" $(seq $((W + 2)))
+  printf '%s\n' "$3"
+}
+
+row() { # $1 = text (may be empty)
+  local pad=$((W - ${#1}))
+  [ "$pad" -lt 0 ] && pad=0
+  printf '┃ %s%*s ┃\n' "$1" "$pad" ''
+}
+
+poster() {
+  rule '┏' '━' '┓'
+  row 'LOKET GATEWAY'
+  row 'akses terbatas · pemilik hanya'
+  rule '┡' '━' '┩'
+  while IFS= read -r l; do row "$l"; done <<< "$ART"
+  rule '┡' '━' '┩'
+  row "host : ${HOST}"
+  row "port : ${PORT}"
+  [ -n "$USER_COUNT" ] && row "users: ${USER_COUNT}"
+  row "time : $(date -u '+%Y-%m-%d %H:%M UTC')"
+  rule '┗' '━' '┛'
+}
+
+poster
+
+if [ "$MODE" = "motd" ]; then
+  cat <<'EOF'
+
+  perintah singkat
+  ────────────────────────────────────────────
+    loket users      daftar akun SSH
+    loket status     kondisi service
+    loket help       bantuan
+EOF
+fi

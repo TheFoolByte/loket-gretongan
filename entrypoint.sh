@@ -34,11 +34,24 @@ for type in ed25519 rsa; do
 done
 
 BANNER="/etc/loket-banner"
-cat > "$BANNER" <<'EOF'
-=========================================
-  LOKET · akses terbatas untuk pemilik
-=========================================
-EOF
+LOKET_USER_COUNT="$(grep -c '"username"' "$DATA_DIR/users.json" 2>/dev/null || true)"
+if ! LOKET_HOST="${LOKET_HOST:-${PUBLIC_HOST:-}}" \
+      SSH_PORT="$SSH_PORT" \
+      LOKET_USERS="${LOKET_USER_COUNT:-0}" \
+      /usr/local/sbin/loket-banner banner > "$BANNER" 2>/dev/null; then
+  printf '%s\n' '=========================================' \
+                '  LOKET · akses terbatas untuk pemilik' \
+                '=========================================' > "$BANNER"
+fi
+chmod 0644 "$BANNER"
+
+# Post-login view: same poster plus a short command crib sheet.
+if LOKET_HOST="${LOKET_HOST:-${PUBLIC_HOST:-}}" \
+   SSH_PORT="$SSH_PORT" \
+   LOKET_USERS="${LOKET_USER_COUNT:-0}" \
+   /usr/local/sbin/loket-banner motd > /etc/motd 2>/dev/null; then
+  chmod 0644 /etc/motd
+fi
 
 pids=()
 
