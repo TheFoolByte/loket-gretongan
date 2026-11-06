@@ -74,6 +74,27 @@ SSH tidak lewat web tier, jadi login SSH diatribusikan dari log dropbear
    - path: `/vless-ws` · uuid = kolom *VLESS uuid* di dashboard
    - path: `/trojan-ws` · password = Trojan secret saat user dibuat
 
+## Multi-node (exit per negara)
+
+Isi `NODES` dengan proxy yang kamu punya/sewa:
+
+```env
+NODES=[{"id":"sg","name":"Singapore","flag":"SG","proxy":"socks5://user:pass@1.2.3.4:1080"},
+       {"id":"us","name":"United States","flag":"US","proxy":"http://user:pass@5.6.7.8:8080"}]
+```
+
+Alurnya: client tetap menghubungi domain kamu; relay keluar lewat proxy node itu,
+jadi **exit IP benar-benar di negara tersebut**. Panel menampilkan pilihan node,
+`/admin` menampilkan status + latensi tiap node (`/api/admin/nodes`).
+
+Catatan jujur:
+
+- Proxy harus milikmu (VPS $3/negara atau provider residential/datacenter berbayar).
+  Daftar proxy hasil scan milik orang lain bukan opsi: trafikmu bisa dibaca operatornya
+  dan memakainya adalah akses tanpa izin.
+- UDP belum didukung lewat node proxy (VLESS UDP akan ditolak).
+- Satu node = satu jalur; kualitasnya sebaik proxy-nya (latensi, uptime).
+
 ## Keamanan yang perlu kamu tahu
 
 - **Tidak ada password default.** Container menolak boot tanpa `ADMIN_PASS` ≥ 12 karakter.

@@ -23,6 +23,8 @@ const { attachVless } = require('./vless');
 const { tailDropbear } = require('./ssh-log');
 const { isPrivateIp } = require('./net-guard');
 const { publicPage, adminPage, qrSvg } = require('./ui');
+const { loadNodes, probeNode } = require('./nodes');
+const { openEgress } = require('./upstream');
 
 const CONFIG = {
   port: Number(process.env.WEB_PORT || process.env.PORT || 8080),
@@ -54,6 +56,8 @@ const signupThrottle = new Throttle({ limit: Number(process.env.SIGNUP_BURST || 
 const users = new Users({ dataDir: process.env.DATA_DIR || '/data' });
 const usage = new Usage({ dataDir: process.env.DATA_DIR || '/data' });
 const adminHash = hashPassword(CONFIG.adminPassword);
+const nodes = loadNodes();
+const nodeById = new Map(nodes.map((n) => [n.id, n]));
 
 const stats = { startedAt: Date.now(), rx: 0, tx: 0, sshRx: 0, sshTx: 0, activeSsh: 0, perIp: new Map() };
 
@@ -157,7 +161,11 @@ const randomName = () => `loket${crypto.randomBytes(3).toString('hex')}`;
 const randomPassword = () => crypto.randomBytes(9).toString('base64url');
 
 /** Everything a client needs, derived from one record. */
-function buildConfig(record, password) {
+function buildConfig(record, password, nodeId = '') {
+  const node = nodeId ? nodeById.get(nodeId) : null;
+  const vlessPath = node ? `${CONFIG.vlessPath}-${node.id}` : CONFIG.vlessPath;
+  const trojanPath = node ? `${CONFIG.trojanPath}-${node.id}` : CONFIG.trojanPath;
+  const suffix = node ? `-${node.id}` : '';
   const host = CONFIG.publicHost || 'localhost';
   const sshHost = CONFIG.sshPublicHost || host;
   const sshPort = CONFIG.sshPublicPort || '22';
@@ -170,8 +178,9 @@ function buildConfig(record, password) {
     expired: record.expired,
     sshCommand: `ssh ${record.username}@${sshHost} -p ${sshPort}`,
     sshWs: `host=${host} port=443 tls=on path=${CONFIG.sshPath} user=${record.username} pass=${password}`,
-    vless: `vless://${record.uuid}@${host}:443?encryption=none&security=tls&sni=${host}&type=ws&host=${host}&path=${q(CONFIG.vlessPath)}#loket-${record.username}`,
-    trojan: `trojan://${record.trojanSecret}@${host}:443?security=tls&sni=${host}&type=ws&host=${host}&path=${q(CONFIG.trojanPath)}#loket-${record.username}`,
+    node: node ? { id: node.id, name: node.name, flag: node.flag } : null,
+    vless: `vless://${record.uuid}@${host}:443?encryption=none&security=tls&sni=${host}&type=ws&host=${host}&path=${q(vlessPath)}#loket-${record.username}${suffix}`,
+    trojan: `trojan://${record.trojanSecret}@${host}:443?security=tls&sni=${host}&type=ws&host=${host}&path=${q(trojanPath)}#loket-${record.username}${suffix}`,
   };
 }
 
@@ -191,6 +200,7 @@ const server = http.createServer(async (req, res) => {
       sshHost: CONFIG.sshPublicHost || CONFIG.publicHost,
       sshPort: CONFIG.sshPublicPort || '22',
       limits: { perIp: CONFIG.signupPerIp },
+      nodes: nodes.map((n) => ({ id: n.id, name: n.name, flag: n.flag })),
     }));
   }
 
@@ -219,7 +229,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const created = users.create({ username, password, days });
       usage.recordSignup({ username: created.username, ip });
-      const cfg = buildConfig({ ...created, password }, password);
+      const cfg = buildConfig({ ...created, password }, password, String(body.node || '').toLowerCase().trim());
       const qr = { vless: await qrSvg(cfg.vless), trojan: await qrSvg(cfg.trojan) };
       return json(res, 201, { account: cfg, qr });
     } catch (err) {
@@ -292,6 +302,11 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { users: list, ips: usage.ipReport(100) });
   }
 
+  if (pathname === '/api/admin/nodes') {
+    const report = await Promise.all(nodes.map(async (n) => ({ ...n, proxy: n.proxy ? 'set' : null, ...(await probeNode(n)) })));
+    return json(res, 200, { nodes: report });
+  }
+
   if (pathname === '/api/admin/block' && req.method === 'POST') {
     try {
       const body = JSON.parse((await readBody(req)) || '{}');
@@ -336,6 +351,20 @@ const server = http.createServer(async (req, res) => {
   return json(res, 404, { error: 'not found' });
 });
 
+function resolveRoute(pathname) {
+  if (pathname === CONFIG.sshPath) return { kind: 'ssh', node: null };
+  for (const base of ['vless', 'trojan']) {
+    const basePath = base === 'vless' ? CONFIG.vlessPath : CONFIG.trojanPath;
+    if (pathname === basePath) return { kind: base, node: null };
+    const prefix = `${basePath}-`;
+    if (pathname.startsWith(prefix)) {
+      const node = nodeById.get(pathname.slice(prefix.length));
+      if (node) return { kind: base, node };
+    }
+  }
+  return null;
+}
+
 // ------------------------------------------------------------- websockets
 
 const wss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 });
@@ -347,23 +376,26 @@ server.on('upgrade', (req, socket, head) => {
     return;
   }
   const pathname = new URL(req.url, 'http://localhost').pathname;
-  const kind = pathname === CONFIG.sshPath ? 'ssh' : pathname === CONFIG.vlessPath ? 'vless' : pathname === CONFIG.trojanPath ? 'trojan' : null;
-  if (!kind) {
+  const route = resolveRoute(pathname);
+  if (!route) {
     socket.destroy();
     return;
   }
   wss.handleUpgrade(req, socket, head, (ws) => {
-    if (kind === 'ssh') {
+    if (route.kind === 'ssh') {
       usage.recordAuth({ username: null, protocol: 'ssh', ip });
       attachSsh(ws, { req, targetHost: CONFIG.sshHost, targetPort: CONFIG.sshPort, stats });
     } else {
+      const egress = route.node ? route.node.proxy : null;
       attachVless(ws, {
-        kind,
+        kind: route.kind,
         users,
         stats,
+        egress,
         isBlocked: (name) => usage.isUserBlocked(name),
-        onAuth: ({ username }) => usage.recordAuth({ username, protocol: kind, ip }),
-        onUsage: ({ username, bytesIn, bytesOut }) => usage.recordBytes({ username, protocol: kind, bytesIn, bytesOut }),
+        onAuth: ({ username }) => usage.recordAuth({ username, protocol: route.kind, ip }),
+        onUsage: ({ username, bytesIn, bytesOut }) => usage.recordBytes({ username, protocol: route.kind, bytesIn, bytesOut }),
+        connect: (opts) => openEgress({ proxyUrl: egress, host: opts.host, port: opts.port }),
       });
     }
   });

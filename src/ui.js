@@ -63,7 +63,7 @@ function copy(el){
 
 // ------------------------------------------------------------------ public
 
-function publicPage({ host, sshHost, sshPort, limits }) {
+function publicPage({ host, sshHost, sshPort, limits, nodes = [] }) {
   const body = `
   <div class="nav"><a href="/admin">admin</a></div>
   <h1>LOKET <span class="muted" style="font-weight:400">· generator config</span></h1>
@@ -81,6 +81,11 @@ function publicPage({ host, sshHost, sshPort, limits }) {
         <input id="d" value="1" inputmode="numeric">
       </div>
     </div>
+    ${nodes.length ? `<div style="margin-top:12px"><label>node keluar</label>
+      <select id="n">
+        <option value="">langsung (tanpa proxy)</option>
+        ${nodes.map((n) => `<option value="${esc(n.id)}">${esc(n.flag)} ${esc(n.name)}</option>`).join('')}
+      </select></div>` : ''}
     <div class="row" style="margin-top:14px">
       <button id="go">Generate config</button>
     </div>
@@ -114,7 +119,7 @@ function publicPage({ host, sshHost, sshPort, limits }) {
     try {
       const res = await fetch('/api/public/signup', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: document.getElementById('u').value, days: Number(document.getElementById('d').value || 1) }),
+        body: JSON.stringify({ username: document.getElementById('u').value, days: Number(document.getElementById('d').value || 1), node: document.getElementById('n') ? document.getElementById('n').value : '' }),
       });
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || 'gagal');
@@ -122,7 +127,8 @@ function publicPage({ host, sshHost, sshPort, limits }) {
       msg.className = 'msg ok'; msg.textContent = 'akun dibuat — simpan config di bawah, halaman ini tidak bisa menampilkannya lagi.';
       out.innerHTML = \`<div class="card">
         <h2>Config untuk <code>\${u.username}</code></h2>
-        <p class="muted" style="margin-top:0">expired \${u.expired} · password <code>\${u.password}</code></p>
+        <p class="muted" style="margin-top:0">expired \${u.expired} · password <code>\${u.password}</code>
+          \${u.node ? ' · node ' + u.node.flag + ' ' + u.node.name : ''}</p>
         <div class="grid two">
           <div>
             \${cfgBox('SSH', u.sshCommand, '')}
@@ -160,6 +166,11 @@ function adminPage({ host }) {
       <h2>User <span class="muted" id="ucount"></span></h2>
       <table><thead><tr><th>user</th><th>ip</th><th>expired</th><th>vl/tj</th><th>status</th><th></th></tr></thead>
       <tbody id="users"></tbody></table>
+    </div>
+    <div class="card">
+      <h2>Node keluar</h2>
+      <table><thead><tr><th>node</th><th>proxy</th><th>status</th><th>latensi</th></tr></thead>
+      <tbody id="nodes"></tbody></table>
     </div>
     <div class="card">
       <h2>IP aktif</h2>
@@ -207,6 +218,15 @@ function adminPage({ host }) {
         \${u.ip ? \`<button class="small ghost" onclick="toggleIp('\${u.ip}', true)">blok ip</button>\` : ''}
         <button class="small danger" onclick="del('\${u.username}')">hapus</button>
       </td></tr>\`).join('') || '<tr><td colspan="6" class="muted">belum ada user</td></tr>';
+
+    try {
+      const nd = await api('/api/admin/nodes');
+      $('nodes').innerHTML = nd.nodes.map(n => \`<tr>
+        <td>\${n.flag || ''} <code>\${n.id}</code> \${n.name}</td>
+        <td>\${n.proxy ? '<span class="badge">proxy</span>' : '<span class="badge">direct</span>'}</td>
+        <td>\${n.ok ? '<span class="badge ok">ok</span>' : \`<span class="badge bad">\${n.note}</span>\`}</td>
+        <td>\${n.ms} ms</td></tr>\`).join('') || '<tr><td colspan="4" class="muted">belum ada node (env NODES kosong)</td></tr>';
+    } catch (e) { /* nodes endpoint optional */ }
 
     $('ips').innerHTML = d.ips.map(i => \`<tr>
       <td><code>\${i.ip}</code> \${i.blocked ? '<span class="badge bad">blok</span>' : ''}</td>

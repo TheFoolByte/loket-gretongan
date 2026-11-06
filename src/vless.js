@@ -124,7 +124,7 @@ const trojanResponseHeader = () => Buffer.from([]);
  * Relay a VLESS/Trojan websocket. `users` decides authorisation; `stats`
  * is a plain object of counters shared with the dashboard.
  */
-function attachVless(ws, { kind, users, stats, log = console, isBlocked = () => false, onAuth = () => {}, onUsage = () => {} }) {
+function attachVless(ws, { kind, users, stats, log = console, isBlocked = () => false, onAuth = () => {}, onUsage = () => {}, connect = (opts) => net.createConnection(opts), egress = null }) {
   let remote = null;
   let user = null;
   let bytesIn = 0;
@@ -188,6 +188,10 @@ function attachVless(ws, { kind, users, stats, log = console, isBlocked = () => 
         }
 
         if (header.isUDP) {
+          if (egress) {
+            log.warn('udp not supported through an upstream proxy');
+            return closeAll();
+          }
           return startUdp(header, target, chunk);
         }
         return startTcp(header, target);
@@ -204,8 +208,14 @@ function attachVless(ws, { kind, users, stats, log = console, isBlocked = () => 
     }
   });
 
-  function startTcp(header, target) {
-    const socket = net.createConnection({ host: target.address, port: header.portRemote });
+  async function startTcp(header, target) {
+    let socket;
+    try {
+      socket = await connect({ host: target.address, port: header.portRemote });
+    } catch (err) {
+      log.warn(`egress failed ${target.address}:${header.portRemote} (${err.message})`);
+      return closeAll();
+    }
     remote = socket;
     socket.setNoDelay(true);
     socket.on('connect', () => {
