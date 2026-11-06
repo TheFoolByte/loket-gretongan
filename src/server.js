@@ -206,7 +206,7 @@ async function dashView() {
       <td><code>\${u.uuid.slice(0, 8)}…</code></td>
       <td><button class="danger" data-del="\${u.username}">hapus</button></td></tr>\`).join('')}
     </tbody></table>
-    <p class="muted">\${st.activeSsh} koneksi SSH aktif · rx \${st.rx}B / tx \${st.txB}</p>
+    <p class="muted">\${st.activeSsh} koneksi SSH aktif · rx \${st.rx}B / tx \${st.tx}B</p>
   </div>
   <div class="card">
     <b>Buat user</b>
