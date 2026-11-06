@@ -383,6 +383,15 @@ function shutdown(signal) {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`[loket] port ${CONFIG.port} is already in use — set WEB_PORT to a free port`);
+  } else {
+    console.error(`[loket] server error: ${err.message}`);
+  }
+  process.exit(1);
+});
+
 server.listen(CONFIG.port, '0.0.0.0', () => {
   console.log(`[loket] dashboard on :${CONFIG.port}`);
   console.log(`[loket] ssh-ws ${CONFIG.sshPath} -> ${CONFIG.sshHost}:${CONFIG.sshPort}`);

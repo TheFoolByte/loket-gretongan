@@ -11,7 +11,14 @@ die() { printf '[loket] ERROR: %s\n' "$*" >&2; exit 1; }
 
 DATA_DIR="${DATA_DIR:-/data}"
 SSH_PORT="${SSH_PORT:-22}"
-PORT="${PORT:-8080}"
+# Railway rewrites PORT when you attach a TCP proxy (e.g. PORT=22 for SSH), so
+# the web tier must not follow it. WEB_PORT is ours; a collision with SSH_PORT
+# is corrected instead of letting node die on EADDRINUSE.
+WEB_PORT="${WEB_PORT:-8080}"
+if [ "$WEB_PORT" = "$SSH_PORT" ]; then
+  log "WEB_PORT=$WEB_PORT collides with SSH_PORT — falling back to 8080"
+  WEB_PORT=8080
+fi
 ENABLE_SNI="${ENABLE_SNI:-0}"
 ENABLE_CLOUDFLARED="${ENABLE_CLOUDFLARED:-1}"
 
@@ -64,11 +71,11 @@ start_dropbear() {
 }
 
 start_web() {
-  log "web tier as user app on :${PORT}"
+  log "web tier as user app on :${WEB_PORT}"
   runuser -u app -- env \
     HOME=/home/app \
     DATA_DIR="$DATA_DIR" \
-    PORT="$PORT" \
+    PORT="$WEB_PORT" \
     SSH_PORT="$SSH_PORT" \
     SSH_WS_PATH="${SSH_WS_PATH:-/ssh-ws}" \
     VLESS_PATH="${VLESS_PATH:-/vless-ws}" \

@@ -4,6 +4,7 @@ FROM node:20-bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive \
     NODE_ENV=production \
     PORT=8080 \
+    WEB_PORT=8080 \
     SSH_PORT=22 \
     DATA_DIR=/data \
     ENABLE_SNI=0
@@ -54,6 +55,6 @@ RUN chmod 0755 /entrypoint.sh /usr/local/sbin/loket-user /usr/local/sbin/loket-b
 EXPOSE 8080 22 2443
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=25s --retries=3 \
-  CMD node -e "require('http').get({host:'127.0.0.1',port:process.env.PORT||8080,path:'/health'},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+  CMD node -e "require('http').get({host:'127.0.0.1',port:process.env.WEB_PORT||8080,path:'/health'},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
 
 ENTRYPOINT ["/entrypoint.sh"]
