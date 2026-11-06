@@ -183,6 +183,17 @@ async function waitReady() {
     assert.equal(blockedSignup.status, 429, 'blocked ip cannot sign up');
     await call('POST', '/api/admin/block', { type: 'ip', value: withIp.ip, block: false }, { 'x-csrf-token': csrf });
 
+    // ---- client ip resolution: right-most xff entry wins, spoofed prefix ignored ----
+    const relog2 = await call('POST', '/api/login', { password: ADMIN_PASS });
+    assert.equal(relog2.status, 200, 'admin login for ip test');
+    const csrf2 = jar.get('vx_csrf');
+    await call('POST', '/api/admin/block', { type: 'ip', value: '198.51.100.7', block: true }, { 'x-csrf-token': csrf2 });
+    const blockedHome = await call('GET', '/', null, { 'x-forwarded-for': '203.0.113.99, 198.51.100.7' });
+    assert.equal(blockedHome.status, 403, 'right-most xff ip is enforced');
+    const spoofHome = await call('GET', '/', null, { 'x-forwarded-for': '198.51.100.7, 203.0.113.99' });
+    assert.equal(spoofHome.status, 200, 'client-supplied left entry cannot fake the ip');
+    await call('POST', '/api/admin/block', { type: 'ip', value: '198.51.100.7', block: false }, { 'x-csrf-token': csrf2 });
+
     // websocket paths must exist but never upgrade without auth headers they need
     const wsProbe = await new Promise((resolve) => {
       const req = http.request({ host: '127.0.0.1', port: PORT, path: '/does-not-exist', headers: { connection: 'Upgrade', upgrade: 'websocket' } });

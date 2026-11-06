@@ -14,12 +14,14 @@ const http = require('node:http');
 const crypto = require('node:crypto');
 const { WebSocketServer } = require('ws');
 
+const net = require('node:net');
 const { Sessions, Throttle, hashPassword, verifyPassword } = require('./auth');
 const { Users } = require('./users');
 const { Usage } = require('./usage');
 const { attachSsh } = require('./ssh-ws');
 const { attachVless } = require('./vless');
 const { tailDropbear } = require('./ssh-log');
+const { isPrivateIp } = require('./net-guard');
 const { publicPage, adminPage, qrSvg } = require('./ui');
 
 const CONFIG = {
@@ -57,12 +59,37 @@ const stats = { startedAt: Date.now(), rx: 0, tx: 0, sshRx: 0, sshTx: 0, activeS
 
 // ---------------------------------------------------------------- helpers
 
+/**
+ * Resolve the client address.
+ *
+ * Railway's edge appends the real client to X-Forwarded-For, so the *last*
+ * entry is the one we can trust; anything the client sent sits to its left.
+ * (Reading [0] — as before — recorded the internal 100.64.x.x hop and made IP
+ * blocks useless.)
+ */
 function clientIp(req) {
-  if (CONFIG.behindProxy) {
-    const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-    if (forwarded) return forwarded;
+  const chain = String(req.headers['x-forwarded-for'] || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (let i = chain.length - 1; i >= 0; i -= 1) {
+    const candidate = chain[i].replace(/^\[|\]$/g, '').replace(/:\d+$/, '');
+    if (net.isIP(candidate) && !isPrivateIp(candidate)) return candidate;
+    if (net.isIP(candidate) && i === 0) return candidate; // all-internal chain
   }
-  return req.socket.remoteAddress || 'unknown';
+  for (const header of ['cf-connecting-ip', 'x-real-ip', 'true-client-ip']) {
+    const value = String(req.headers[header] || '').trim().replace(/:\d+$/, '');
+    if (net.isIP(value) && !isPrivateIp(value)) return value;
+  }
+  if (process.env.LOG_IP_HEADERS === '1') {
+    console.log('[loket] ip headers', JSON.stringify({
+      xff: req.headers['x-forwarded-for'] || null,
+      cf: req.headers['cf-connecting-ip'] || null,
+      real: req.headers['x-real-ip'] || null,
+      peer: req.socket.remoteAddress || null,
+    }));
+  }
+  return (req.socket.remoteAddress || 'unknown').replace(/^::ffff:/, '');
 }
 
 function parseCookies(header = '') {
