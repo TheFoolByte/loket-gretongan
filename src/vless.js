@@ -124,14 +124,24 @@ const trojanResponseHeader = () => Buffer.from([]);
  * Relay a VLESS/Trojan websocket. `users` decides authorisation; `stats`
  * is a plain object of counters shared with the dashboard.
  */
-function attachVless(ws, { kind, users, stats, log = console }) {
+function attachVless(ws, { kind, users, stats, log = console, isBlocked = () => false, onAuth = () => {}, onUsage = () => {} }) {
   let remote = null;
+  let user = null;
+  let bytesIn = 0;
+  let bytesOut = 0;
   let udpSocket = null;
   let closed = false;
 
   const closeAll = () => {
     if (closed) return;
     closed = true;
+    if (user) {
+      try {
+        onUsage({ username: user.username, bytesIn, bytesOut });
+      } catch {
+        /* ignore */
+      }
+    }
     try {
       if (udpSocket) udpSocket.close();
     } catch {
@@ -161,15 +171,13 @@ function attachVless(ws, { kind, users, stats, log = console }) {
         const header = kind === 'trojan' ? readTrojanHeader(chunk) : readVlessHeader(chunk);
         if (header.hasError) return closeAll();
 
-        if (kind === 'trojan') {
-          if (!users.findByTrojanHash(header.trojanHash)) {
-            log.warn('trojan auth rejected');
-            return closeAll();
-          }
-        } else if (!users.findByUuid(header.uuid)) {
-          log.warn('vless auth rejected');
+        user = kind === 'trojan' ? users.findByTrojanHash(header.trojanHash) : users.findByUuid(header.uuid);
+        if (!user || isBlocked(user.username)) {
+          log.warn(`${kind} auth rejected`);
+          user = null;
           return closeAll();
         }
+        onAuth({ username: user.username });
 
         let target;
         try {
@@ -187,6 +195,7 @@ function attachVless(ws, { kind, users, stats, log = console }) {
 
       if (remote) {
         stats.rx += chunk.length;
+        bytesIn += chunk.length;
         remote.write(chunk);
       }
     } catch (err) {
@@ -206,6 +215,7 @@ function attachVless(ws, { kind, users, stats, log = console }) {
     });
     socket.on('data', (data) => {
       stats.tx += data.length;
+      bytesOut += data.length;
       if (ws.readyState === ws.OPEN) ws.send(data);
     });
     socket.on('error', closeAll);

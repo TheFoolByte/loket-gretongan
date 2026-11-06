@@ -8,6 +8,8 @@ const assert = require('node:assert');
 const http = require('node:http');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
+const fs = require('node:fs');
+const os = require('node:os');
 
 const PORT = 18080;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -18,10 +20,14 @@ const child = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server
     ...process.env,
     PORT: String(PORT),
     ADMIN_PASS,
-    DATA_DIR: '/tmp/loket-smoke',
+    DATA_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'loket-smoke-')),
     LOKET_NO_HELPER: '1',
     COOKIE_SECURE: '0',
-    LOGIN_LIMIT: '3',
+    LOGIN_LIMIT: '10',
+    SIGNUP_PER_IP: '2',
+    SIGNUP_BURST: '3',
+    SSH_PUBLIC_HOST: 'ssh.example.test',
+    SSH_PUBLIC_PORT: '4444',
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -143,11 +149,39 @@ async function waitReady() {
     assert.equal(afterLogout.status, 401, 'session revoked');
 
     // throttle: 4th wrong attempt inside the window must be 429
-    await call('POST', '/api/login', { password: 'x1' });
-    await call('POST', '/api/login', { password: 'x2' });
-    await call('POST', '/api/login', { password: 'x3' });
-    const limited = await call('POST', '/api/login', { password: 'x4' });
-    assert.equal(limited.status, 429, 'login throttled');
+
+    // ---- public generator ----
+    const pub1 = await call('POST', '/api/public/signup', { days: 2 });
+    assert.equal(pub1.status, 201, `signup 1: ${JSON.stringify(pub1.data)}`);
+    assert.ok(pub1.data.account.vless.startsWith('vless://'), 'vless uri');
+    assert.ok(pub1.data.account.trojan.startsWith('trojan://'), 'trojan uri');
+    assert.ok(pub1.data.account.sshCommand.includes('-p 4444'), 'ssh command uses public port');
+    assert.ok(pub1.data.qr.vless.includes('<svg'), 'qr svg rendered');
+
+    const pub2 = await call('POST', '/api/public/signup', {});
+    assert.equal(pub2.status, 201, `signup2: ${JSON.stringify(pub2.data)}`);
+
+    const pub3 = await call('POST', '/api/public/signup', {});
+    assert.equal(pub3.status, 429, 'third signup throttled');
+
+    // ---- admin monitoring ----
+    const relog = await call('POST', '/api/login', { password: ADMIN_PASS });
+    assert.equal(relog.status, 200, `relogin: ${JSON.stringify(relog.data)}`);
+    const csrf = jar.get('vx_csrf');
+
+    const overview = await call('GET', '/api/admin/overview');
+    assert.equal(overview.status, 200);
+    assert.ok(overview.data.users.length >= 2, 'admin sees created users');
+    const withIp = overview.data.users.find((u) => u.ip);
+    assert.ok(withIp, 'signup ip recorded');
+    assert.ok(overview.data.ips.length >= 1, 'ip report populated');
+
+    // block the ip, then a fresh signup must be refused
+    const block = await call('POST', '/api/admin/block', { type: 'ip', value: withIp.ip, block: true }, { 'x-csrf-token': csrf });
+    assert.equal(block.status, 200, 'block ip');
+    const blockedSignup = await call('POST', '/api/public/signup', {});
+    assert.equal(blockedSignup.status, 429, 'blocked ip cannot sign up');
+    await call('POST', '/api/admin/block', { type: 'ip', value: withIp.ip, block: false }, { 'x-csrf-token': csrf });
 
     // websocket paths must exist but never upgrade without auth headers they need
     const wsProbe = await new Promise((resolve) => {
@@ -159,10 +193,17 @@ async function waitReady() {
     });
     assert.notEqual(wsProbe, 101, 'unknown ws path is not upgraded');
 
+    let limited = null;
+    for (let i = 0; i < 14 && !limited; i += 1) {
+      const attempt = await call('POST', '/api/login', { password: `wrong-${i}` });
+      if (attempt.status === 429) limited = attempt;
+    }
+    assert.ok(limited, 'login throttled after repeated failures');
+
     console.log('\nsmoke: all assertions passed');
     process.exitCode = 0;
   } catch (err) {
-    console.error('\nsmoke FAILED:', err.message);
+    console.error('\nsmoke FAILED:', err.message); if (process.env.SMOKE_DEBUG) console.error(err.stack);
     process.exitCode = 1;
   } finally {
     child.kill('SIGTERM');

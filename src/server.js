@@ -1,20 +1,12 @@
 /**
- * LOKET HARDENED — single-service gateway for Railway.
+ * LOKET — single-service gateway for Railway.
  *
- * Routes:
- *   GET  /                dashboard (login form when unauthenticated)
- *   POST /api/login       password -> session cookie + csrf token
- *   POST /api/logout
- *   GET  /api/me          session probe
- *   GET  /api/users       list (auth)
- *   POST /api/users       create (auth + csrf)
- *   POST /api/users/password  reset a user's password (auth + csrf)
- *   DELETE /api/users     delete (auth + csrf)
- *   GET  /api/stats       counters (auth)
- *   GET  /health          liveness (no auth, no secrets)
- *
- * WebSocket upgrades: SSH_WS_PATH -> dropbear, VLESS_PATH / TROJAN_PATH -> relay
- * with per-user credentials.
+ *   /                     public config generator (rate limited, no password)
+ *   /admin                admin monitor (ADMIN_PASS, session + csrf)
+ *   /health               liveness
+ *   /api/public/signup    create an account, return ready-to-paste configs
+ *   /api/admin/*          users + ip monitoring, block/unblock
+ *   /ssh-ws /vless-ws /trojan-ws   websocket gateways
  */
 'use strict';
 
@@ -24,20 +16,29 @@ const { WebSocketServer } = require('ws');
 
 const { Sessions, Throttle, hashPassword, verifyPassword } = require('./auth');
 const { Users } = require('./users');
+const { Usage } = require('./usage');
 const { attachSsh } = require('./ssh-ws');
 const { attachVless } = require('./vless');
+const { tailDropbear } = require('./ssh-log');
+const { publicPage, adminPage, qrSvg } = require('./ui');
 
 const CONFIG = {
-  port: Number(process.env.PORT || 8080),
+  port: Number(process.env.WEB_PORT || process.env.PORT || 8080),
   sshPort: Number(process.env.SSH_PORT || 22),
   sshHost: process.env.SSH_HOST || '127.0.0.1',
   sshPath: process.env.SSH_WS_PATH || '/ssh-ws',
   vlessPath: process.env.VLESS_PATH || '/vless-ws',
   trojanPath: process.env.TROJAN_PATH || '/trojan-ws',
   publicHost: process.env.PUBLIC_HOST || '',
+  sshPublicHost: process.env.SSH_PUBLIC_HOST || '',
+  sshPublicPort: process.env.SSH_PUBLIC_PORT || '',
   adminPassword: process.env.ADMIN_PASS || '',
   cookieSecure: process.env.COOKIE_SECURE !== '0',
   behindProxy: process.env.TRUST_PROXY !== '0',
+  signupPerIp: Number(process.env.SIGNUP_PER_IP || 2),
+  signupDaily: Number(process.env.SIGNUP_DAILY || 40),
+  signupMaxDays: Number(process.env.SIGNUP_MAX_DAYS || 7),
+  dropbearLog: process.env.DROPBEAR_LOG || '/data/dropbear.log',
 };
 
 if (!CONFIG.adminPassword || CONFIG.adminPassword.length < 12) {
@@ -47,18 +48,12 @@ if (!CONFIG.adminPassword || CONFIG.adminPassword.length < 12) {
 
 const sessions = new Sessions({ secret: process.env.SESSION_SECRET });
 const loginThrottle = new Throttle({ limit: Number(process.env.LOGIN_LIMIT || 8), windowMs: 60_000 });
+const signupThrottle = new Throttle({ limit: Number(process.env.SIGNUP_BURST || 5), windowMs: 10 * 60_000 });
 const users = new Users({ dataDir: process.env.DATA_DIR || '/data' });
+const usage = new Usage({ dataDir: process.env.DATA_DIR || '/data' });
 const adminHash = hashPassword(CONFIG.adminPassword);
 
-const stats = {
-  startedAt: Date.now(),
-  rx: 0,
-  tx: 0,
-  sshRx: 0,
-  sshTx: 0,
-  activeSsh: 0,
-  perIp: new Map(),
-};
+const stats = { startedAt: Date.now(), rx: 0, tx: 0, sshRx: 0, sshTx: 0, activeSsh: 0, perIp: new Map() };
 
 // ---------------------------------------------------------------- helpers
 
@@ -80,14 +75,13 @@ function parseCookies(header = '') {
 }
 
 function json(res, status, body, extraHeaders = {}) {
-  const payload = JSON.stringify(body);
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
     ...extraHeaders,
   });
-  res.end(payload);
+  res.end(JSON.stringify(body));
 }
 
 function html(res, status, body) {
@@ -98,7 +92,7 @@ function html(res, status, body) {
     'x-frame-options': 'DENY',
     'referrer-policy': 'no-referrer',
     'content-security-policy':
-      "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'self'",
+      "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; form-action 'self'",
   });
   res.end(body);
 }
@@ -121,145 +115,93 @@ function readBody(req, limit = 32 * 1024) {
   });
 }
 
-function auth(req) {
+const auth = (req) => {
   const cookies = parseCookies(req.headers.cookie);
-  return { ok: sessions.verify(cookies.vx_session), cookies };
-}
+  return { cookies, ok: sessions.verify(cookies.vx_session) };
+};
 
 function csrfOk(req, cookies) {
   const header = req.headers['x-csrf-token'];
-  const cookie = cookies.vx_csrf;
-  if (!header || !cookie || header.length !== cookie.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(String(header)), Buffer.from(String(cookie)));
+  if (!header || !cookies.vx_csrf || String(header).length !== String(cookies.vx_csrf).length) return false;
+  return crypto.timingSafeEqual(Buffer.from(String(header)), Buffer.from(String(cookies.vx_csrf)));
 }
 
-// ---------------------------------------------------------------- dashboard
+const randomName = () => `loket${crypto.randomBytes(3).toString('hex')}`;
+const randomPassword = () => crypto.randomBytes(9).toString('base64url');
 
-function page({ loggedIn }) {
-  const csrf = loggedIn ? 'csrf-from-cookie' : '';
-  return `<!doctype html>
-<html lang="id"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>LOKET · gateway</title>
-<style>
-  :root{color-scheme:dark}
-  body{margin:0;font:14px/1.5 ui-sans-serif,system-ui,sans-serif;background:#0b0f14;color:#d7e0ea}
-  main{max-width:860px;margin:0 auto;padding:24px}
-  h1{font-size:18px;margin:0 0 4px}
-  .muted{color:#7c8b9d}
-  .card{border:1px solid #1e2836;background:#111823;border-radius:10px;padding:16px;margin:14px 0}
-  input,button{font:inherit;padding:9px 11px;border-radius:8px;border:1px solid #263241;background:#0e141c;color:#d7e0ea}
-  button{background:#1b6ef3;border-color:#1b6ef3;cursor:pointer}
-  button.ghost{background:transparent;border-color:#263241}
-  button.danger{background:#7f1d1d;border-color:#7f1d1d}
-  table{width:100%;border-collapse:collapse}
-  th,td{text-align:left;padding:8px 6px;border-bottom:1px solid #1a2431;font-size:13px}
-  code{background:#0e141c;padding:2px 6px;border-radius:6px;font-size:12px}
-  .row{display:flex;gap:8px;flex-wrap:wrap}
-  .err{color:#fca5a5}
-</style></head>
-<body><main>
-  <h1>LOKET <span class="muted">hardened</span></h1>
-  <p class="muted">SSH-WS · VLESS-WS · Trojan-WS · satu container</p>
-  <div id="app"></div>
-</main>
-<script>
-const CSRF = ${JSON.stringify(csrf)};
-const loggedIn = ${loggedIn ? 'true' : 'false'};
-const app = document.getElementById('app');
-
-async function api(path, opts = {}) {
-  const res = await fetch(path, {
-    credentials: 'same-origin',
-    headers: { 'content-type': 'application/json', 'x-csrf-token': CSRF, ...(opts.headers || {}) },
-    ...opts,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || res.statusText);
-  return data;
-}
-
-function loginView() {
-  app.innerHTML = \`<div class="card">
-    <form id="f"><div class="row">
-      <input id="p" type="password" placeholder="ADMIN_PASS" autocomplete="current-password" style="flex:1">
-      <button>Masuk</button>
-    </div><p id="e" class="err"></p></form></div>\`;
-  document.getElementById('f').onsubmit = async (ev) => {
-    ev.preventDefault();
-    try {
-      await api('/api/login', { method: 'POST', body: JSON.stringify({ password: document.getElementById('p').value }) });
-      location.reload();
-    } catch (err) { document.getElementById('e').textContent = err.message; }
+/** Everything a client needs, derived from one record. */
+function buildConfig(record, password) {
+  const host = CONFIG.publicHost || 'localhost';
+  const sshHost = CONFIG.sshPublicHost || host;
+  const sshPort = CONFIG.sshPublicPort || '22';
+  const q = (s) => encodeURIComponent(s);
+  return {
+    username: record.username,
+    password,
+    uuid: record.uuid,
+    trojanSecret: record.trojanSecret,
+    expired: record.expired,
+    sshCommand: `ssh ${record.username}@${sshHost} -p ${sshPort}`,
+    sshWs: `host=${host} port=443 tls=on path=${CONFIG.sshPath} user=${record.username} pass=${password}`,
+    vless: `vless://${record.uuid}@${host}:443?encryption=none&security=tls&sni=${host}&type=ws&host=${host}&path=${q(CONFIG.vlessPath)}#loket-${record.username}`,
+    trojan: `trojan://${record.trojanSecret}@${host}:443?security=tls&sni=${host}&type=ws&host=${host}&path=${q(CONFIG.trojanPath)}#loket-${record.username}`,
   };
 }
 
-async function dashView() {
-  const [{ users }, st] = await Promise.all([api('/api/users'), api('/api/stats')]);
-  app.innerHTML = \`
-  <div class="card">
-    <div class="row" style="justify-content:space-between;align-items:center">
-      <b>SSH users</b><button class="ghost" id="out">Keluar</button>
-    </div>
-    <table><thead><tr><th>user</th><th>expired</th><th>VLESS uuid</th><th></th></tr></thead>
-    <tbody>\${users.map(u => \`<tr><td>\${u.username}</td><td>\${u.expired}</td>
-      <td><code>\${u.uuid.slice(0, 8)}…</code></td>
-      <td><button class="danger" data-del="\${u.username}">hapus</button></td></tr>\`).join('')}
-    </tbody></table>
-    <p class="muted">\${st.activeSsh} koneksi SSH aktif · rx \${st.rx}B / tx \${st.tx}B</p>
-  </div>
-  <div class="card">
-    <b>Buat user</b>
-    <div class="row" style="margin-top:10px">
-      <input id="u" placeholder="username" style="flex:1">
-      <input id="pw" placeholder="password (min 10)" style="flex:1">
-      <input id="d" placeholder="hari" value="30" style="width:90px">
-      <button id="add">Tambah</button>
-    </div>
-    <p id="msg" class="muted"></p>
-  </div>\`;
-  document.getElementById('out').onclick = async () => { await api('/api/logout', { method: 'POST' }); location.reload(); };
-  document.getElementById('add').onclick = async () => {
-    const msg = document.getElementById('msg');
-    try {
-      const r = await api('/api/users', { method: 'POST', body: JSON.stringify({
-        username: document.getElementById('u').value,
-        password: document.getElementById('pw').value,
-        days: Number(document.getElementById('d').value || 30),
-      }) });
-      msg.innerHTML = \`dibuat: <code>\${r.user.username}</code> · Trojan secret: <code>\${r.user.trojanSecret}</code> (simpan, hanya tampil sekali)\`;
-      setTimeout(dashView, 1500);
-    } catch (err) { msg.innerHTML = '<span class="err">' + err.message + '</span>'; }
-  };
-  app.querySelectorAll('[data-del]').forEach((btn) => {
-    btn.onclick = async () => {
-      if (!confirm('Hapus ' + btn.dataset.del + '?')) return;
-      try { await api('/api/users?username=' + encodeURIComponent(btn.dataset.del), { method: 'DELETE' }); dashView(); }
-      catch (err) { alert(err.message); }
-    };
-  });
-}
-
-if (loggedIn) dashView().catch((err) => { app.innerHTML = '<p class="err">' + err.message + '</p>'; });
-else loginView();
-</script></body></html>`;
-}
-
-// ---------------------------------------------------------------- http
+// ---------------------------------------------------------------- server
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
-  const path = url.pathname;
+  const pathname = url.pathname;
+  const ip = clientIp(req);
 
-  if (path === '/health') return json(res, 200, { ok: true, uptime: Math.floor((Date.now() - stats.startedAt) / 1000) });
+  if (pathname === '/health') return json(res, 200, { ok: true, uptime: Math.floor((Date.now() - stats.startedAt) / 1000) });
 
-  if (path === '/' && req.method === 'GET') {
-    const { ok } = auth(req);
-    return html(res, 200, page({ loggedIn: ok }));
+  if (pathname === '/' && req.method === 'GET') {
+    if (usage.isIpBlocked(ip)) return html(res, 403, '<p style="font-family:sans-serif;padding:24px">Akses diblokir.</p>');
+    return html(res, 200, publicPage({
+      host: CONFIG.publicHost,
+      sshHost: CONFIG.sshPublicHost || CONFIG.publicHost,
+      sshPort: CONFIG.sshPublicPort || '22',
+      limits: { perIp: CONFIG.signupPerIp },
+    }));
   }
 
-  if (path === '/api/login' && req.method === 'POST') {
-    const ip = clientIp(req);
+  if (pathname === '/admin' && req.method === 'GET') return html(res, 200, adminPage({ host: CONFIG.publicHost }));
+
+  // ---- public signup (no password, throttled per ip) ----
+  if (pathname === '/api/public/signup' && req.method === 'POST') {
+    const burst = signupThrottle.hit(ip);
+    if (!burst.allowed) return json(res, 429, { error: 'terlalu sering, coba lagi nanti' });
+    usage.resetDailyIfNeeded();
+    const gate = usage.signupAllowed(ip, { perIp: CONFIG.signupPerIp, global: CONFIG.signupDaily });
+    if (!gate.allowed) return json(res, 429, { error: gate.reason });
+
+    let body = {};
+    try {
+      body = JSON.parse((await readBody(req)) || '{}');
+    } catch {
+      return json(res, 400, { error: 'bad request' });
+    }
+
+    const wanted = String(body.username || '').toLowerCase().trim();
+    const username = wanted || randomName();
+    const days = Math.min(Math.max(Number(body.days) || 1, 1), CONFIG.signupMaxDays);
+    const password = randomPassword();
+
+    try {
+      const created = users.create({ username, password, days });
+      usage.recordSignup({ username: created.username, ip });
+      const cfg = buildConfig({ ...created, password }, password);
+      const qr = { vless: await qrSvg(cfg.vless), trojan: await qrSvg(cfg.trojan) };
+      return json(res, 201, { account: cfg, qr });
+    } catch (err) {
+      return json(res, 400, { error: err.message });
+    }
+  }
+
+  // ---- auth ----
+  if (pathname === '/api/login' && req.method === 'POST') {
     const limit = loginThrottle.hit(ip);
     if (!limit.allowed) {
       return json(res, 429, { error: 'too many attempts' }, { 'retry-after': Math.ceil(limit.retryAfterMs / 1000) });
@@ -273,32 +215,28 @@ const server = http.createServer(async (req, res) => {
     if (!verifyPassword(password, adminHash)) return json(res, 401, { error: 'wrong password' });
     loginThrottle.reset(ip);
     const csrf = crypto.randomBytes(18).toString('base64url');
-    const cookie = [
-      `vx_session=${sessions.issue()}; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200${CONFIG.cookieSecure ? '; Secure' : ''}`,
-      `vx_csrf=${csrf}; Path=/; SameSite=Strict; Max-Age=43200${CONFIG.cookieSecure ? '; Secure' : ''}`,
-    ];
-    return json(res, 200, { ok: true, csrf }, { 'set-cookie': cookie });
-  }
-
-  if (path === '/api/logout' && req.method === 'POST') {
-    const { cookies } = auth(req);
-    sessions.revoke(cookies.vx_session);
-    return json(res, 200, { ok: true }, {
-      'set-cookie': ['vx_session=; Path=/; Max-Age=0', 'vx_csrf=; Path=/; Max-Age=0'],
+    return json(res, 200, { ok: true, csrf }, {
+      'set-cookie': [
+        `vx_session=${sessions.issue()}; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200${CONFIG.cookieSecure ? '; Secure' : ''}`,
+        `vx_csrf=${csrf}; Path=/; SameSite=Strict; Max-Age=43200${CONFIG.cookieSecure ? '; Secure' : ''}`,
+      ],
     });
   }
 
-  // Everything below requires a session.
-  const { ok, cookies } = auth(req);
-  if (!ok) return json(res, 401, { error: 'unauthorized' });
-
-  if (path.startsWith('/api/') && !['GET', 'HEAD'].includes(req.method) && !csrfOk(req, cookies)) {
-    return json(res, 403, { error: 'bad csrf token' });
+  if (pathname === '/api/logout' && req.method === 'POST') {
+    const { cookies } = auth(req);
+    sessions.revoke(cookies.vx_session);
+    return json(res, 200, { ok: true }, { 'set-cookie': ['vx_session=; Path=/; Max-Age=0', 'vx_csrf=; Path=/; Max-Age=0'] });
   }
 
-  if (path === '/api/me') return json(res, 200, { ok: true });
+  // ---- everything below needs an admin session ----
+  const { ok, cookies } = auth(req);
+  if (!ok) return json(res, 401, { error: 'unauthorized' });
+  if (!['GET', 'HEAD'].includes(req.method) && !csrfOk(req, cookies)) return json(res, 403, { error: 'bad csrf token' });
 
-  if (path === '/api/stats') {
+  if (pathname === '/api/me') return json(res, 200, { ok: true });
+
+  if (pathname === '/api/stats') {
     return json(res, 200, {
       uptime: Math.floor((Date.now() - stats.startedAt) / 1000),
       activeSsh: stats.activeSsh,
@@ -310,21 +248,47 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
-  if (path === '/api/users' && req.method === 'GET') {
-    return json(res, 200, { users: users.list() });
+  if (pathname === '/api/admin/overview') {
+    const list = users.list().map((u) => {
+      const rec = usage.userReport(u.username) || {};
+      const bytes = (k) => (rec[k]?.bytesIn || 0) + (rec[k]?.bytesOut || 0);
+      const sessionsOf = (k) => (rec[k]?.sessions || 0) + (rec[k]?.logins || 0);
+      return {
+        ...u,
+        ip: rec.lastIp || null,
+        lastSeen: rec.lastSeen || null,
+        blocked: usage.isUserBlocked(u.username),
+        bytes: { ssh: bytes('ssh'), vless: bytes('vless'), trojan: bytes('trojan') },
+        sessions: { ssh: sessionsOf('ssh'), vless: sessionsOf('vless'), trojan: sessionsOf('trojan') },
+      };
+    });
+    return json(res, 200, { users: list, ips: usage.ipReport(100) });
   }
 
-  if (path === '/api/users' && req.method === 'POST') {
+  if (pathname === '/api/admin/block' && req.method === 'POST') {
     try {
       const body = JSON.parse((await readBody(req)) || '{}');
-      const created = users.create(body);
-      return json(res, 201, { user: created });
+      if (body.type === 'ip') usage.blockIp(String(body.value), body.block !== false);
+      else if (body.type === 'user') usage.blockUser(String(body.value), body.block !== false);
+      else return json(res, 400, { error: 'type must be ip or user' });
+      return json(res, 200, { ok: true });
     } catch (err) {
       return json(res, 400, { error: err.message });
     }
   }
 
-  if (path === '/api/users/password' && req.method === 'POST') {
+  if (pathname === '/api/users' && req.method === 'GET') return json(res, 200, { users: users.list() });
+
+  if (pathname === '/api/users' && req.method === 'POST') {
+    try {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      return json(res, 201, { user: users.create(body) });
+    } catch (err) {
+      return json(res, 400, { error: err.message });
+    }
+  }
+
+  if (pathname === '/api/users/password' && req.method === 'POST') {
     try {
       const body = JSON.parse((await readBody(req)) || '{}');
       users.resetPassword(body.username, body.password);
@@ -334,7 +298,7 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  if (path === '/api/users' && req.method === 'DELETE') {
+  if ((pathname === '/api/users' || pathname === '/api/admin/users') && req.method === 'DELETE') {
     try {
       return json(res, 200, { user: users.remove(url.searchParams.get('username')) });
     } catch (err) {
@@ -345,37 +309,59 @@ const server = http.createServer(async (req, res) => {
   return json(res, 404, { error: 'not found' });
 });
 
-// ---------------------------------------------------------------- websockets
+// ------------------------------------------------------------- websockets
 
 const wss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 });
 
 server.on('upgrade', (req, socket, head) => {
-  const path = new URL(req.url, 'http://localhost').pathname;
-  const kind = path === CONFIG.sshPath ? 'ssh' : path === CONFIG.vlessPath ? 'vless' : path === CONFIG.trojanPath ? 'trojan' : null;
+  const ip = clientIp(req);
+  if (usage.isIpBlocked(ip)) {
+    socket.destroy();
+    return;
+  }
+  const pathname = new URL(req.url, 'http://localhost').pathname;
+  const kind = pathname === CONFIG.sshPath ? 'ssh' : pathname === CONFIG.vlessPath ? 'vless' : pathname === CONFIG.trojanPath ? 'trojan' : null;
   if (!kind) {
     socket.destroy();
     return;
   }
   wss.handleUpgrade(req, socket, head, (ws) => {
     if (kind === 'ssh') {
+      usage.recordAuth({ username: null, protocol: 'ssh', ip });
       attachSsh(ws, { req, targetHost: CONFIG.sshHost, targetPort: CONFIG.sshPort, stats });
     } else {
-      attachVless(ws, { kind, users, stats });
+      attachVless(ws, {
+        kind,
+        users,
+        stats,
+        isBlocked: (name) => usage.isUserBlocked(name),
+        onAuth: ({ username }) => usage.recordAuth({ username, protocol: kind, ip }),
+        onUsage: ({ username, bytesIn, bytesOut }) => usage.recordBytes({ username, protocol: kind, bytesIn, bytesOut }),
+      });
     }
   });
 });
 
-// ---------------------------------------------------------------- lifecycle
+// SSH logins over the TCP proxy are only visible in dropbear's log.
+tailDropbear({
+  file: CONFIG.dropbearLog,
+  onLogin: ({ username, ip }) => usage.recordAuth({ username, protocol: 'ssh', ip }),
+});
+
+// -------------------------------------------------------------- lifecycle
 
 const sweeper = setInterval(() => {
   const removed = users.pruneExpired();
   if (removed.length) console.log(`[loket] pruned expired users: ${removed.join(', ')}`);
+  usage.resetDailyIfNeeded();
+  usage.flush();
   sessions.sweep();
 }, 60 * 60 * 1000);
 
 function shutdown(signal) {
   console.log(`[loket] ${signal} received, shutting down`);
   clearInterval(sweeper);
+  usage.flush();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 5000).unref();
 }
@@ -384,16 +370,11 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
 server.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    console.error(`[loket] port ${CONFIG.port} is already in use — set WEB_PORT to a free port`);
-  } else {
-    console.error(`[loket] server error: ${err.message}`);
-  }
+  console.error(err.code === 'EADDRINUSE' ? `[loket] port ${CONFIG.port} already in use — set WEB_PORT` : `[loket] ${err.message}`);
   process.exit(1);
 });
 
 server.listen(CONFIG.port, '0.0.0.0', () => {
-  console.log(`[loket] dashboard on :${CONFIG.port}`);
-  console.log(`[loket] ssh-ws ${CONFIG.sshPath} -> ${CONFIG.sshHost}:${CONFIG.sshPort}`);
-  console.log(`[loket] vless ${CONFIG.vlessPath} · trojan ${CONFIG.trojanPath} (auth required)`);
+  console.log(`[loket] panel on :${CONFIG.port} (public generator + /admin)`);
+  console.log(`[loket] ssh-ws ${CONFIG.sshPath} · vless ${CONFIG.vlessPath} · trojan ${CONFIG.trojanPath}`);
 });

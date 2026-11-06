@@ -64,9 +64,16 @@ pids=()
 
 start_dropbear() {
   log "dropbear on 0.0.0.0:${SSH_PORT}"
+  # Auth events are the only way to attribute SSH logins (they happen after the
+  # TCP proxy forwards bytes), so dropbear writes to a file the app can tail.
+  : >> "$DATA_DIR/dropbear.log"
+  chown app:app "$DATA_DIR/dropbear.log" 2>/dev/null || true
+  chmod 0640 "$DATA_DIR/dropbear.log" 2>/dev/null || true
+  tail -F "$DATA_DIR/dropbear.log" 2>/dev/null &
+  pids+=("$!")
   /usr/sbin/dropbear -F -E -p "0.0.0.0:${SSH_PORT}" -b "$BANNER" -W 65536 \
     -r "$HOSTKEY_DIR/dropbear_rsa_host_key" \
-    -r "$HOSTKEY_DIR/dropbear_ed25519_host_key" &
+    -r "$HOSTKEY_DIR/dropbear_ed25519_host_key" >>"$DATA_DIR/dropbear.log" 2>&1 &
   pids+=("$!")
 }
 
@@ -85,6 +92,13 @@ start_web() {
     PUBLIC_HOST="${PUBLIC_HOST:-}" \
     COOKIE_SECURE="${COOKIE_SECURE:-1}" \
     LOGIN_LIMIT="${LOGIN_LIMIT:-8}" \
+    SSH_PUBLIC_HOST="${SSH_PUBLIC_HOST:-}" \
+    SSH_PUBLIC_PORT="${SSH_PUBLIC_PORT:-}" \
+    SIGNUP_PER_IP="${SIGNUP_PER_IP:-2}" \
+    SIGNUP_DAILY="${SIGNUP_DAILY:-40}" \
+    SIGNUP_MAX_DAYS="${SIGNUP_MAX_DAYS:-7}" \
+    SIGNUP_BURST="${SIGNUP_BURST:-5}" \
+    DROPBEAR_LOG="${DATA_DIR}/dropbear.log" \
     ALLOW_PRIVATE_TARGETS="${ALLOW_PRIVATE_TARGETS:-0}" \
     node /app/src/server.js &
   pids+=("$!")

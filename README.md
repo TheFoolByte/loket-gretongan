@@ -48,6 +48,20 @@ Railway → **New Project → Deploy from GitHub** → pilih repo → tambahkan:
 > *dan* SSH langsung (22) sekaligus, pakai Cloudflare Tunnel untuk salah satunya,
 > atau pisahkan jadi dua service.
 
+## Panel
+
+| Path | Siapa | Isi |
+|---|---|---|
+| `/` | publik | generator config: pilih masa aktif → akun + SSH/VLESS/Trojan + QR, langsung tampil |
+| `/admin` | admin (`ADMIN_PASS`) | daftar user + IP + volume per protokol, blok IP, blok/hapus user |
+
+Pembatas publik: `SIGNUP_PER_IP` akun per 24 jam per IP, `SIGNUP_DAILY` total harian,
+`SIGNUP_MAX_DAYS` batas masa aktif, `SIGNUP_BURST` percobaan per 10 menit.
+Semua signup tercatat: IP, user-agent, protokol, volume.
+
+SSH tidak lewat web tier, jadi login SSH diatribusikan dari log dropbear
+(`/data/dropbear.log`); VLESS/Trojan diatribusikan dari UUID/password masing-masing user.
+
 ## Pakai
 
 1. Buka `https://<domain>/` → login `ADMIN_PASS`.
