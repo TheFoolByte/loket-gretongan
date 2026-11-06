@@ -1,0 +1,19 @@
+{
+  "name": "loket-gretongan",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hardened single-service Railway gateway: authenticated dashboard, SSH-over-WS, VLESS/Trojan over WS with per-user auth",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "check": "node --check src/server.js && node --check src/auth.js && node --check src/users.js && node --check src/vless.js && node --check src/net-guard.js && node --check src/ssh-ws.js",
+    "test": "node test/smoke.js"
+  },
+  "dependencies": {
+    "ws": "8.18.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

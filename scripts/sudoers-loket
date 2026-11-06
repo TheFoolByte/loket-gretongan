@@ -1,0 +1,4 @@
+# The web app runs as `app` and may only run this one helper as root.
+app ALL=(root) NOPASSWD: /usr/local/sbin/loket-user
+Defaults:app !requiretty
+Defaults:app secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"

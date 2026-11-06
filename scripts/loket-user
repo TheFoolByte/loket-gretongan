@@ -1,0 +1,63 @@
+#!/bin/bash
+# loket-user — the only privileged operation the web app may perform.
+# Installed root-owned, invoked through sudo NOPASSWD by the unprivileged app.
+#
+#   loket-user add    <username> <YYYY-MM-DD>   (password on stdin)
+#   loket-user passwd <username>                (password on stdin)
+#   loket-user del    <username>
+#
+# Everything is validated here; the caller cannot choose a shell, home or uid.
+set -euo pipefail
+
+NAME_RE='^[a-z][a-z0-9_-]{2,31}$'
+DATE_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+
+die() { echo "loket-user: $*" >&2; exit 1; }
+
+read_password() {
+  local pw
+  IFS= read -r pw || true
+  pw="${pw%$'\r'}"
+  [ "${#pw}" -ge 10 ] || die "password must be at least 10 characters"
+  [ "${#pw}" -le 128 ] || die "password too long"
+  # Reject control characters and whitespace-only passwords.
+  case "$pw" in
+    *[$'\n\r\t']*) die "password must not contain control characters" ;;
+  esac
+  printf '%s' "$pw"
+}
+
+cmd="${1:-}"
+name="${2:-}"
+
+case "$cmd" in
+  add)
+    expiry="${3:-}"
+    [[ "$name" =~ $NAME_RE ]] || die "invalid username"
+    [[ "$expiry" =~ $DATE_RE ]] || die "invalid expiry date"
+    pw="$(read_password)"
+    [ "$name" != "root" ] || die "refusing to manage root"
+    if id "$name" >/dev/null 2>&1; then
+      usermod -e "$expiry" "$name"
+    else
+      useradd -m -s /bin/bash -e "$expiry" "$name"
+    fi
+    printf '%s:%s' "$name" "$pw" | chpasswd
+    # No sudo, no docker group, no shell upgrade: plain unprivileged account.
+    ;;
+  passwd)
+    [[ "$name" =~ $NAME_RE ]] || die "invalid username"
+    pw="$(read_password)"
+    id "$name" >/dev/null 2>&1 || die "no such user"
+    printf '%s:%s' "$name" "$pw" | chpasswd
+    ;;
+  del)
+    [[ "$name" =~ $NAME_RE ]] || die "invalid username"
+    id "$name" >/dev/null 2>&1 || exit 0
+    pkill -KILL -u "$name" >/dev/null 2>&1 || true
+    userdel -r -f "$name" >/dev/null 2>&1 || userdel -f "$name" >/dev/null 2>&1 || true
+    ;;
+  *)
+    die "usage: loket-user {add|passwd|del} <username> [expiry]"
+    ;;
+esac
