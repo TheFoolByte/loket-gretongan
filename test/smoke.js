@@ -190,6 +190,8 @@ async function waitReady() {
     await call('POST', '/api/admin/block', { type: 'ip', value: '198.51.100.7', block: true }, { 'x-csrf-token': csrf2 });
     const blockedHome = await call('GET', '/', null, { 'x-forwarded-for': '203.0.113.99, 198.51.100.7' });
     assert.equal(blockedHome.status, 403, 'right-most xff ip is enforced');
+    const blockedSignup2 = await call('POST', '/api/public/signup', {}, { 'x-forwarded-for': '203.0.113.99, 198.51.100.7' });
+    assert.equal(blockedSignup2.status, 429, 'blocked ip cannot sign up');
     const spoofHome = await call('GET', '/', null, { 'x-forwarded-for': '198.51.100.7, 203.0.113.99' });
     assert.equal(spoofHome.status, 200, 'client-supplied left entry cannot fake the ip');
     await call('POST', '/api/admin/block', { type: 'ip', value: '198.51.100.7', block: false }, { 'x-csrf-token': csrf2 });
