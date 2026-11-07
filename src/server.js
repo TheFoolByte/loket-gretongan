@@ -193,6 +193,25 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/health') return json(res, 200, { ok: true, uptime: Math.floor((Date.now() - stats.startedAt) / 1000) });
 
+  // ---- public config endpoint (argo-node parity) ----
+  if (pathname === '/api/config' && req.method === 'GET') {
+    const host = req.headers.host || CONFIG.publicHost || 'localhost';
+    const nodeId = url.searchParams.get('node') || '';
+    const node = nodeId ? nodeById.get(nodeId) : null;
+    const vlessPath = node ? `${CONFIG.vlessPath}-${node.id}` : CONFIG.vlessPath;
+    const trojanPath = node ? `${CONFIG.trojanPath}-${node.id}` : CONFIG.trojanPath;
+    const q = (s) => encodeURIComponent(s);
+    return json(res, 200, {
+      host,
+      node: node ? { id: node.id, name: node.name, flag: node.flag } : null,
+      paths: { vless: vlessPath, trojan: trojanPath, ssh: CONFIG.sshPath },
+      templates: {
+        vless: `vless://{UUID}@${host}:443?encryption=none&security=tls&sni=${host}&type=ws&host=${host}&path=${q(vlessPath)}#{NAME}-VLESS`,
+        trojan: `trojan://{SECRET}@${host}:443?security=tls&sni=${host}&type=ws&host=${host}&path=${q(trojanPath)}#{NAME}-TROJAN`,
+      },
+    });
+  }
+
   if (pathname === '/' && req.method === 'GET') {
     if (usage.isIpBlocked(ip)) return html(res, 403, '<p style="font-family:sans-serif;padding:24px">Akses diblokir.</p>');
     return html(res, 200, publicPage({
