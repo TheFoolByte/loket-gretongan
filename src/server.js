@@ -60,6 +60,19 @@ const users = new Users({ dataDir: process.env.DATA_DIR || '/data' });
 const usage = new Usage({ dataDir: process.env.DATA_DIR || '/data' });
 const adminHash = hashPassword(CONFIG.adminPassword);
 const nodesFilePath = process.env.NODES_FILE || path.join(process.env.DATA_DIR || '/data', 'nodes.json');
+
+// One-shot seed: NODES_SEED=1 copies the bundled node list onto the volume.
+// Remove the variable afterwards so rescans stay authoritative.
+if (process.env.NODES_SEED === '1') {
+  try {
+    const bundled = fs.readFileSync(path.join(__dirname, '..', 'nodes.verified.json'), 'utf8');
+    fs.writeFileSync(nodesFilePath, bundled);
+    console.log(`[loket] nodes seeded from bundle -> ${nodesFilePath}`);
+  } catch (err) {
+    console.error(`[loket] node seed failed: ${err.message}`);
+  }
+}
+
 let nodes = loadNodes();
 let nodeById = new Map(nodes.map((n) => [n.id, n]));
 

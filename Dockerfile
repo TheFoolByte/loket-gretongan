@@ -39,6 +39,7 @@ COPY package.json package-lock.json* /app/
 RUN npm install --omit=dev --no-audit --no-fund && npm cache clean --force
 
 COPY src/ /app/src/
+COPY nodes.verified.json /app/nodes.verified.json
 COPY scripts/ /app/scripts/
 COPY entrypoint.sh /entrypoint.sh
 COPY scripts/loket-user /usr/local/sbin/loket-user
