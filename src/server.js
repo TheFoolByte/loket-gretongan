@@ -145,7 +145,7 @@ function html(res, status, body) {
     'x-frame-options': 'DENY',
     'referrer-policy': 'no-referrer',
     'content-security-policy':
-      "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; form-action 'self'",
+      "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;",
   });
   res.end(body);
 }
@@ -289,7 +289,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/' && req.method === 'GET') {
-    if (usage.isIpBlocked(ip)) return html(res, 403, '<p style="font-family:sans-serif;padding:24px">Akses diblokir.</p>');
+    // Disabled IP blocking check on public dashboard
     return html(res, 200, publicPage({
       host: CONFIG.publicHost,
       sshHost: CONFIG.sshPublicHost || CONFIG.publicHost,
