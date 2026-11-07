@@ -202,21 +202,59 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/health') return json(res, 200, { ok: true, uptime: Math.floor((Date.now() - stats.startedAt) / 1000) });
 
-  // ---- public config endpoint (argo-node parity) ----
+  // ---- public config endpoint (argo-node full parity) ----
   if (pathname === '/api/config' && req.method === 'GET') {
     const host = req.headers.host || CONFIG.publicHost || 'localhost';
     const nodeId = url.searchParams.get('node') || '';
+    const bug = url.searchParams.get('bug') || '';
+    const sec = url.searchParams.get('sec') || 'tls'; // 'tls' or 'none'
+    const isTls = sec === 'tls';
+    const port = isTls ? 443 : 80;
+    
     const node = nodeId ? nodeById.get(nodeId) : null;
     const vlessPath = node ? `${CONFIG.vlessPath}-${node.id}` : CONFIG.vlessPath;
     const trojanPath = node ? `${CONFIG.trojanPath}-${node.id}` : CONFIG.trojanPath;
     const q = (s) => encodeURIComponent(s);
+    
+    // Fallback or demo UUID/Secret if not logged in
+    const defaultUuid = 'c0a80101-0000-4000-8000-000000000001';
+    const defaultSecret = 'loketsecret';
+    const nodeTag = node ? `-${node.id.toUpperCase()}` : '-DIRECT';
+    const connectHost = bug || host;
+
+    // VMESS JSON Payload (CF CDN format)
+    const vmessPayload = {
+      v: '2',
+      ps: `LOKET${nodeTag}-VMESS`,
+      add: connectHost,
+      port: port,
+      id: defaultUuid,
+      aid: '0',
+      scy: 'auto',
+      net: 'ws',
+      type: 'none',
+      host: host,
+      path: vlessPath,
+      tls: isTls ? 'tls' : '',
+      sni: isTls ? (bug || host) : '',
+      alpn: '',
+      fp: 'firefox',
+    };
+    const vmessLink = `vmess://${Buffer.from(JSON.stringify(vmessPayload)).toString('base64')}`;
+
+    const tlsParam = isTls ? `&security=tls&sni=${q(bug || host)}&fp=firefox` : '&security=none';
+
     return json(res, 200, {
       host,
       node: node ? { id: node.id, name: node.name, flag: node.flag } : null,
-      paths: { vless: vlessPath, trojan: trojanPath, ssh: CONFIG.sshPath },
-      templates: {
-        vless: `vless://{UUID}@${host}:443?encryption=none&security=tls&sni=${host}&type=ws&host=${host}&path=${q(vlessPath)}#{NAME}-VLESS`,
-        trojan: `trojan://{SECRET}@${host}:443?security=tls&sni=${host}&type=ws&host=${host}&path=${q(trojanPath)}#{NAME}-TROJAN`,
+      native: {
+        vless: `vless://${defaultUuid}@${connectHost}:${port}?encryption=none${tlsParam}&type=ws&host=${q(host)}&path=${q(vlessPath)}#LOKET${nodeTag}-VLESS`,
+        trojan: `trojan://${defaultSecret}@${connectHost}:${port}?${tlsParam.slice(1)}&type=ws&host=${q(host)}&path=${q(trojanPath)}#LOKET${nodeTag}-TROJAN`,
+      },
+      argo: {
+        vless: `vless://${defaultUuid}@${connectHost}:${port}?encryption=none${tlsParam}&type=ws&host=${q(host)}&path=${q(vlessPath)}#LOKET${nodeTag}-CDN-VLESS`,
+        vmess: vmessLink,
+        trojan: `trojan://${defaultSecret}@${connectHost}:${port}?${tlsParam.slice(1)}&type=ws&host=${q(host)}&path=${q(trojanPath)}#LOKET${nodeTag}-CDN-TROJAN`,
       },
     });
   }

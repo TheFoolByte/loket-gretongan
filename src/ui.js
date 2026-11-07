@@ -1,847 +1,538 @@
-/**
- * Server-rendered pages: public config generator and the admin monitor.
- * Premium macOS / glassmorphism inspired dashboard (argo-node reference)
- * with region selection, bug SNI/wildcard chips, and QR code support.
- */
 'use strict';
 
-const QR = require('qrcode');
-
-const CSS = `
-:root{
-  --bg:#07080A;
-  --card:rgba(8,10,14,0.32);
-  --line:rgba(255,255,255,0.09);
-  --line-strong:rgba(255,255,255,0.18);
-  --fg:#F2F2F2;
-  --muted:#8E99A8;
-  --acc:#1b6ef3;
-  --acc-glow:rgba(27,110,243,0.35);
-  --cyan:#7dd3e0;
-  --cyan-glow:rgba(125,211,224,0.3);
-  --ok:#22c55e;
-  --bad:#ef4444;
-}
-*{box-sizing:border-box;margin:0;padding:0}
-html{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;scroll-behavior:smooth}
-body{
-  margin:0;
-  font:13.5px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
-  background:var(--bg);
-  color:var(--fg);
-  min-height:100vh;
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  padding:40px 18px 60px;
-  overflow-x:hidden;
-  perspective:1200px;
-  position:relative;
-}
-.bg-image{
-  position:fixed;
-  inset:0;
-  z-index:-2;
-  background:radial-gradient(1200px 700px at 50% -10%, #152238 0%, #0a0e14 60%, #050608 100%);
-  filter:brightness(0.95);
-  pointer-events:none;
-}
-.bg-orbs{position:fixed;inset:0;pointer-events:none;overflow:hidden;z-index:-1;opacity:0.25}
-.orb{position:absolute;border-radius:50%;filter:blur(80px);will-change:transform}
-.orb1{width:520px;height:520px;left:-100px;top:-60px;background:radial-gradient(circle, rgba(27,110,243,0.25) 0%, transparent 70%);animation:floatA 20s ease-in-out infinite}
-.orb2{width:560px;height:560px;right:-120px;bottom:-100px;background:radial-gradient(circle, rgba(125,211,224,0.18) 0%, transparent 70%);animation:floatB 24s ease-in-out infinite}
-@keyframes floatA{0%,100%{transform:translate3d(0,0,0) scale(1)}50%{transform:translate3d(20px,24px,0) scale(1.05)}}
-@keyframes floatB{0%,100%{transform:translate3d(0,0,0) scale(1)}50%{transform:translate3d(-18px,-20px,0) scale(1.03)}}
-
-.shell{
-  width:100%;
-  max-width:640px;
-  position:relative;
-  z-index:1;
-  transform-style:preserve-3d;
-  will-change:transform;
-}
-.panel{
-  background:var(--card);
-  backdrop-filter:blur(20px);
-  -webkit-backdrop-filter:blur(20px);
-  border:1px solid var(--line);
-  border-radius:22px;
-  overflow:hidden;
-  box-shadow:0 20px 60px rgba(0,0,0,0.65), 0 1px 0 rgba(255,255,255,0.08) inset;
-  transition:box-shadow 0.4s ease, border-color 0.4s ease;
-}
-.panel:hover{
-  border-color:var(--line-strong);
-  box-shadow:0 24px 70px rgba(0,0,0,0.75), 0 1px 0 rgba(255,255,255,0.12) inset;
-}
-.header{
-  height:60px;
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  padding:0 24px;
-  border-bottom:1px solid var(--line);
-  background:rgba(8,10,14,0.4);
-}
-.brand{
-  font-size:12px;
-  font-weight:700;
-  letter-spacing:0.24em;
-  text-transform:uppercase;
-  color:#FFFFFF;
-  display:flex;
-  align-items:center;
-  gap:8px;
-}
-.brand .dot{
-  width:8px;
-  height:8px;
-  border-radius:50%;
-  background:var(--ok);
-  box-shadow:0 0 10px var(--ok);
-}
-.nav-link{
-  font-size:12px;
-  color:var(--muted);
-  text-decoration:none;
-  padding:5px 11px;
-  border-radius:8px;
-  border:1px solid transparent;
-  transition:all 0.2s;
-}
-.nav-link:hover{
-  color:#fff;
-  border-color:var(--line);
-  background:rgba(255,255,255,0.05);
-}
-.content{padding:24px 24px 20px}
-
-.eyebrow{
-  font-size:11px;
-  font-weight:700;
-  letter-spacing:0.12em;
-  text-transform:uppercase;
-  color:var(--muted);
-  margin-bottom:10px;
-  display:flex;
-  align-items:center;
-  gap:8px;
-}
-.eyebrow .line{
-  flex:1;
-  height:1px;
-  background:linear-gradient(90deg, var(--line) 0%, transparent 100%);
-}
-.group{
-  margin-bottom:16px;
-  background:rgba(8,10,14,0.3);
-  border:1px solid var(--line);
-  border-radius:14px;
-  padding:14px;
-  box-shadow:inset 0 1px 0 rgba(255,255,255,0.04);
-  transition:border-color 0.25s, background 0.25s;
-}
-.group:hover{
-  border-color:rgba(255,255,255,0.15);
-  background:rgba(8,10,14,0.45);
+function esc(s = '') {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
-label{display:block;font-size:11.5px;color:var(--muted);margin:0 0 6px;font-weight:500}
-input,select{
-  font:inherit;
-  color:var(--fg);
-  background:rgba(12,16,22,0.6);
-  border:1px solid var(--line);
-  border-radius:10px;
-  padding:10px 12px;
-  width:100%;
-  outline:none;
-  transition:border-color 0.2s, box-shadow 0.2s;
-}
-input:focus,select:focus{
-  border-color:var(--cyan);
-  box-shadow:0 0 0 3px var(--cyan-glow);
-}
+/**
+ * Renders the EXACT ARGO-NODE user dashboard with full glassmorphism,
+ * 3D tilt lerp, region selector, provider listing, TLS toggle, and Bug SNI/CDN.
+ */
+function publicPage({ host = '', sshHost = '', sshPort = '22', nodes = [] } = {}) {
+  // Group nodes by country code
+  const regionMap = {};
+  for (const n of nodes) {
+    const cc = (n.flag || 'XX').toUpperCase();
+    if (!regionMap[cc]) regionMap[cc] = [];
+    regionMap[cc].push(n);
+  }
 
-.row{display:flex;gap:10px;flex-wrap:wrap}
-.row>*{flex:1}
-.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ARGO TUNNEL — LOKET</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    html{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;scroll-behavior:smooth}
+    body{
+      background:#07080A;
+      color:#F2F2F2;
+      font-family:-apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
+      min-height:100vh;
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      padding:56px 20px 40px;
+      overflow-x:hidden;
+      perspective:1200px;
+      position:relative;
+    }
+    .bg-image{
+      position:fixed;
+      inset:0;
+      z-index:-2;
+      background-image:url('https://r2-storage-8yf.pages.dev/f/Walpaper/%E0%B9%81%E0%B8%A1%E0%B8%87%E0%B8%A1%E0%B8%B8%E0%B8%A1%E0%B8%A1%E0%B8%82%E0%B8%A2%E0%B8%B8%E0%B9%88%E0%B8%A1%E0%B8%AB%E0%B8%B1%E0%B8%A7%E2%80%A6.%F0%9F%A9%B7%F0%9F%95%B8%EF%B8%8F%F0%9F%95%B7%EF%B8%8F%20(1).jpg');
+      background-size:cover;
+      background-position:center center;
+      background-repeat:no-repeat;
+      filter:brightness(0.98) contrast(1.02) saturate(1.06);
+      animation:kenBurns 28s ease-in-out infinite alternate;
+      will-change:transform;
+      transform-origin:center center;
+    }
+    .bg-overlay{
+      position:fixed;
+      inset:0;
+      z-index:-1;
+      background:rgba(0,0,0,0.18);
+      backdrop-filter:brightness(0.95);
+      -webkit-backdrop-filter:brightness(0.95);
+      pointer-events:none;
+    }
+    .bg-orbs{ position:fixed; inset:0; pointer-events:none; overflow:hidden; z-index:0; opacity:0.10; }
+    .orb{ position:absolute; border-radius:50%; filter:blur(60px); opacity:0.28; will-change:transform; }
+    .orb1{ width:520px; height:520px; left:-100px; top:-60px; background:radial-gradient(circle at 30% 30%, rgba(255,255,255,0.10) 0%, transparent 70%); animation:floatA 20s ease-in-out infinite; }
+    .orb2{ width:560px; height:560px; right:-120px; bottom:-100px; background:radial-gradient(circle at 70% 70%, rgba(255,255,255,0.06) 0%, transparent 70%); animation:floatB 24s ease-in-out infinite; }
+    @keyframes kenBurns{ 0%{ transform:scale(1)} 50%{ transform:scale(1.04)} 100%{ transform:scale(1.07)}}
+    @keyframes floatA{ 0%,100%{ transform:translate3d(0,0,0) scale(1)} 50%{ transform:translate3d(12px,16px,0) scale(1.03)}}
+    @keyframes floatB{ 0%,100%{ transform:translate3d(0,0,0) scale(1)} 50%{ transform:translate3d(-10px,-12px,0) scale(1.02)}}
+    .shell{
+      width:100%;
+      max-width:540px;
+      position:relative;
+      z-index:1;
+      transform-style:preserve-3d;
+      will-change:transform;
+    }
+    .panel{
+      background:rgba(8,10,14,0.32);
+      backdrop-filter:none;
+      -webkit-backdrop-filter:none;
+      border:1px solid rgba(255,255,255,0.09);
+      border-radius:20px;
+      overflow:hidden;
+      box-shadow:0 16px 48px rgba(0,0,0,0.55), 0 1px 0 rgba(255,255,255,0.06) inset, 0 0 0 1px rgba(255,255,255,0.02) inset;
+      transform:translateZ(0);
+      transition:box-shadow 0.4s ease, border-color 0.4s ease;
+    }
+    .panel:hover{ border-color:rgba(255,255,255,0.11); box-shadow:0 20px 56px rgba(0,0,0,0.6), 0 1px 0 rgba(255,255,255,0.08) inset; }
+    .header{
+      height:56px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      border-bottom:1px solid rgba(255,255,255,0.06);
+      background:rgba(8,10,14,0.26);
+    }
+    .brand{
+      font-size:13px;
+      font-weight:700;
+      letter-spacing:0.28em;
+      text-transform:uppercase;
+      color:#FFFFFF;
+      text-shadow:0 1px 14px rgba(0,0,0,0.55), 0 0 18px rgba(0,0,0,0.35);
+    }
+    .content{ padding:26px 26px 22px; }
+    .eyebrow{
+      font-size:12px;
+      font-weight:600;
+      letter-spacing:0.12em;
+      text-transform:uppercase;
+      color:#F2F2F2;
+      margin-bottom:12px;
+      text-shadow:0 1px 10px rgba(0,0,0,0.65);
+    }
+    .group{
+      margin-bottom:16px;
+      background:rgba(8,10,14,0.26);
+      border:1px solid rgba(255,255,255,0.09);
+      border-radius:14px;
+      padding:14px;
+      box-shadow:inset 0 1px 0 rgba(255,255,255,0.04);
+      transition:transform 0.35s cubic-bezier(0.23,1,0.32,1), border-color 0.3s ease, background 0.3s ease;
+      transform:translateZ(0);
+    }
+    .group:hover{ border-color:rgba(255,214,10,0.12); background:rgba(8,10,14,0.32); }
+    .group.reveal{ opacity:0; transform:translateY(18px) translateZ(0); transition:opacity 0.9s cubic-bezier(0.22,1,0.36,1), transform 0.9s cubic-bezier(0.22,1,0.36,1), border-color 0.3s ease, background 0.3s ease; }
+    .group.reveal.in{ opacity:1; transform:translateY(0) translateZ(0); }
+    .group:last-of-type{ margin-bottom:0; }
+    .group-head{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      margin-bottom:10px;
+    }
+    .group-line{
+      width:14px;
+      height:1px;
+      background:linear-gradient(90deg, rgba(125,211,224,0.95) 0%, rgba(14,47,90,0.25) 100%);
+      box-shadow:0 0 8px rgba(125,211,224,0.45);
+    }
+    .select-field{
+      width:100%;
+      background:rgba(8,10,14,0.4);
+      border:1px solid rgba(255,255,255,0.12);
+      border-radius:11px;
+      color:#FFF;
+      padding:12px 14px;
+      font-size:13px;
+      outline:none;
+      transition:border-color 0.2s;
+    }
+    .select-field:focus{ border-color:rgba(125,211,224,0.5); }
+    .select-field optgroup{ background:#12141a; color:#AAA; }
+    .select-field option{ background:#1c1f26; color:#FFF; }
+    
+    .grid-2{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .grid-3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
+    button.proto{
+      height:44px;
+      background:rgba(8,10,14,0.22);
+      border:1px solid rgba(255,255,255,0.09);
+      border-radius:11px;
+      color:#E8E8E8;
+      font-size:13px;
+      font-weight:550;
+      letter-spacing:0.02em;
+      cursor:pointer;
+      transition:all 0.22s cubic-bezier(0.23,1,0.32,1);
+      box-shadow:inset 0 1px 0 rgba(255,255,255,0.05), 0 2px 10px rgba(0,0,0,0.25);
+      position:relative;
+      overflow:hidden;
+    }
+    button.proto::before{
+      content:"";
+      position:absolute;
+      inset:0;
+      background:linear-gradient(180deg, rgba(255,255,255,0.06) 0%, transparent 55%);
+      opacity:0;
+      transition:opacity 0.22s ease;
+      pointer-events:none;
+    }
+    button.proto:hover{ background:rgba(255,255,255,0.06); border-color:rgba(255,255,255,0.10); color:#FFFFFF; transform:translateY(-1px); box-shadow:inset 0 1px 0 rgba(255,255,255,0.07), 0 6px 20px rgba(0,0,0,0.35); }
+    button.proto:hover::before{ opacity:1; }
+    button.proto:active{ transform:translateY(0) scale(0.99); }
+    button.proto.active{ background:#FFFFFF; border-color:#FFFFFF; color:#0A0A0A; font-weight:650; box-shadow:0 6px 20px rgba(0,0,0,0.30), inset 0 1px 0 rgba(255,255,255,0.9); }
+    button.proto.active:hover{ background:#F2F2F2; border-color:#F2F2F2; }
 
-button.proto{
-  height:44px;
-  background:rgba(8,10,14,0.35);
-  border:1px solid var(--line);
-  border-radius:11px;
-  color:#E8E8E8;
-  font-size:12.5px;
-  font-weight:600;
-  letter-spacing:0.04em;
-  cursor:pointer;
-  transition:all 0.2s cubic-bezier(0.23,1,0.32,1);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,0.05), 0 2px 8px rgba(0,0,0,0.25);
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  gap:6px;
-}
-button.proto:hover{
-  background:rgba(255,255,255,0.08);
-  border-color:rgba(255,255,255,0.2);
-  color:#FFFFFF;
-  transform:translateY(-1px);
-}
-button.proto.active{
-  background:#FFFFFF;
-  border-color:#FFFFFF;
-  color:#0A0A0A;
-  font-weight:700;
-  box-shadow:0 4px 18px rgba(255,255,255,0.25);
-}
+    .output{
+      margin-top:20px;
+      padding-top:20px;
+      border-top:1px solid rgba(255,255,255,0.06);
+      display:flex;
+      gap:8px;
+      align-items:center;
+    }
+    .field{
+      flex:1;
+      position:relative;
+      display:flex;
+      align-items:center;
+    }
+    input#config-output{
+      width:100%;
+      background:rgba(8,10,14,0.26);
+      border:1px solid rgba(255,255,255,0.09);
+      color:#E8E8E8;
+      padding:13px 14px;
+      border-radius:11px;
+      font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size:12px;
+      line-height:1.4;
+      outline:none;
+      transition:border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+      box-shadow:inset 0 1px 0 rgba(255,255,255,0.03);
+    }
+    input#config-output:focus{ border-color:rgba(125,211,224,0.32); background:rgba(8,10,14,0.32); box-shadow:0 0 0 3px rgba(125,211,224,0.10); }
+    .btn-copy{
+      height:42px;
+      padding:0 22px;
+      background:rgba(242,242,242,0.95);
+      color:#080808;
+      border:1px solid rgba(255,255,255,0.9);
+      border-radius:11px;
+      font-size:13px;
+      font-weight:650;
+      letter-spacing:0.01em;
+      cursor:pointer;
+      white-space:nowrap;
+      transition:all 0.2s ease;
+      box-shadow:0 4px 16px rgba(0,0,0,0.25);
+    }
+    .btn-copy:hover{ background:#FFFFFF; transform:translateY(-1px); box-shadow:0 6px 20px rgba(0,0,0,0.3); }
+    .btn-copy:active{ transform:scale(0.98); }
+    .hint{
+      margin-top:10px;
+      font-size:11px;
+      color:#F0F0F0;
+      text-shadow:0 1px 6px rgba(0,0,0,0.45);
+      line-height:1.5;
+      letter-spacing:0.01em;
+    }
+    .wildcard{ margin-top:18px; padding-top:18px; border-top:1px solid rgba(255,255,255,0.06); }
+    .wildcard-list{ display:flex; flex-wrap:wrap; gap:7px; margin-top:10px; }
+    .chip{ display:inline-flex; align-items:center; padding:8px 13px; background:rgba(8,10,14,0.26); border:1px solid rgba(255,255,255,0.09); border-radius:999px; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size:13px; font-weight:500; color:#F0F0F0; cursor:pointer; transition:all 0.2s ease; }
+    .chip:hover{ border-color:rgba(125,211,224,0.28); color:#FFFFFF; background:rgba(255,255,255,0.06); transform:translateY(-1px); }
+    .chip.active{ background:rgba(125,211,224,0.2); border-color:rgba(125,211,224,0.6); color:#FFF; }
 
-button.btn-primary{
-  width:100%;
-  height:46px;
-  background:linear-gradient(180deg, #2b7af7 0%, #175cd3 100%);
-  border:1px solid rgba(255,255,255,0.2);
-  border-radius:11px;
-  color:#FFFFFF;
-  font-size:13.5px;
-  font-weight:650;
-  letter-spacing:0.03em;
-  cursor:pointer;
-  transition:all 0.2s;
-  box-shadow:0 6px 20px var(--acc-glow), inset 0 1px 0 rgba(255,255,255,0.25);
-}
-button.btn-primary:hover{
-  filter:brightness(1.08);
-  transform:translateY(-1px);
-}
-button.btn-primary:active{transform:scale(0.99)}
-
-.wildcard-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
-.chip{
-  display:inline-flex;
-  align-items:center;
-  padding:6px 11px;
-  background:rgba(8,10,14,0.4);
-  border:1px solid var(--line);
-  border-radius:999px;
-  font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size:11.5px;
-  color:#E0E0E0;
-  cursor:pointer;
-  transition:all 0.2s;
-}
-.chip:hover{
-  border-color:var(--cyan);
-  color:#fff;
-  background:rgba(125,211,224,0.1);
-  transform:translateY(-1px);
-}
-.chip.active{
-  border-color:var(--cyan);
-  color:var(--cyan);
-  background:rgba(125,211,224,0.15);
-  box-shadow:0 0 12px var(--cyan-glow);
-}
-
-.cfg-card{
-  margin-top:14px;
-  padding:14px;
-  border:1px dashed var(--line-strong);
-  border-radius:12px;
-  background:rgba(0,0,0,0.3);
-}
-.cfg-row{
-  display:flex;
-  gap:10px;
-  align-items:center;
-  justify-content:space-between;
-  margin-top:10px;
-}
-.cfg-row:first-child{margin-top:0}
-.cfg-val{flex:1;min-width:0}
-.cfg-val code{
-  display:block;
-  background:rgba(0,0,0,0.5);
-  border:1px solid var(--line);
-  padding:8px 10px;
-  border-radius:8px;
-  font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size:11px;
-  color:#E8E8E8;
-  word-break:break-all;
-  max-height:80px;
-  overflow-y:auto;
-}
-.qr-box{
-  background:#fff;
-  padding:6px;
-  border-radius:8px;
-  width:100px;
-  height:100px;
-  flex-shrink:0;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-}
-.qr-box svg{width:100%;height:100%}
-
-button.btn-copy{
-  padding:7px 14px;
-  background:rgba(255,255,255,0.92);
-  color:#0A0A0A;
-  border:none;
-  border-radius:8px;
-  font-size:12px;
-  font-weight:650;
-  cursor:pointer;
-  transition:all 0.15s;
-}
-button.btn-copy:hover{background:#FFFFFF;transform:translateY(-1px)}
-button.btn-copy.copied{background:var(--ok);color:#04140a}
-
-.msg{margin-top:10px;font-size:12px;text-align:center}
-.msg.err{color:var(--bad)}
-.msg.ok{color:var(--ok)}
-.msg.loading{color:var(--cyan)}
-
-.footer{
-  margin-top:18px;
-  text-align:center;
-  font-size:11.5px;
-  color:var(--muted);
-}
-.footer a{color:var(--muted);text-decoration:none}
-.footer a:hover{color:#fff}
-
-/* Admin specific */
-table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}
-th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line);vertical-align:top}
-th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
-.badge{display:inline-block;font-size:10.5px;padding:2px 7px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
-.badge.ok{color:var(--ok);border-color:#14532d;background:rgba(34,197,94,0.08)}
-.badge.bad{color:var(--bad);border-color:#7f1d1d;background:rgba(239,68,68,0.08)}
-button.small{padding:5px 9px;font-size:11.5px;width:auto;border-radius:7px;cursor:pointer}
-button.ghost{background:transparent;border:1px solid var(--line);color:var(--fg)}
-button.ghost:hover{border-color:rgba(255,255,255,0.3);color:#fff}
-button.danger{background:var(--bad);border:1px solid var(--bad);color:#fff}
-
-@media(max-width:600px){
-  body{padding:20px 12px 40px}
-  .content{padding:18px 16px}
-  .header{padding:0 16px}
-  .grid-2,.grid-3{grid-template-columns:1fr}
-  .cfg-row{flex-direction:column;align-items:stretch}
-  .qr-box{margin:8px auto 0}
-}
-`;
-
-const esc = (s) =>
-  String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-
-const BUILTIN_WILDCARDS = [
-  'support.zoom.us',
-  'ava.game.naver.com',
-  'quiz.vidio.com',
-  'graph.instagram.com',
-  'api.midtrans.com',
-  'investor.spotify.com',
-];
-
-// ------------------------------------------------------------------ public
-
-function publicPage({ host, sshHost, sshPort, limits, nodes = [] }) {
-  const nodesJson = JSON.stringify(nodes);
-  const hostJson = JSON.stringify(host || 'localhost');
-
-  const body = `
+    .footer{ margin-top:20px; text-align:center; }
+    .support-link{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      color:rgba(255,255,255,0.95);
+      text-decoration:none;
+      font-size:13px;
+      font-weight:500;
+      letter-spacing:0.04em;
+      background:rgba(8,10,14,0.26);
+      border:1px solid rgba(255,255,255,0.09);
+      padding:9px 16px;
+      border-radius:999px;
+      transition:all 0.22s ease;
+      box-shadow:0 4px 16px rgba(0,0,0,0.25);
+    }
+    .support-link:hover{ color:#FFFFFF; background:rgba(255,255,255,0.07); border-color:rgba(125,211,224,0.28); transform:translateY(-1px); }
+    
+    @media (max-width:560px){
+      body{ padding:28px 16px 24px; }
+      .content{ padding:20px 18px 18px; }
+      .grid-3{ grid-template-columns:1fr; }
+      .output{ flex-direction:column; align-items:stretch; }
+      .btn-copy{ width:100%; justify-content:center; }
+    }
+  </style>
+</head>
+<body>
   <div class="bg-image" aria-hidden="true"></div>
+  <div class="bg-overlay" aria-hidden="true"></div>
   <div class="bg-orbs" aria-hidden="true"><div class="orb orb1"></div><div class="orb orb2"></div></div>
-
+  
   <div class="shell" id="shell">
     <div class="panel">
-      <div class="header">
-        <div class="brand"><span class="dot"></span> LOKET GRETONGAN</div>
-        <a href="/admin" class="nav-link">Admin →</a>
-      </div>
-
+      <div class="header"><div class="brand">ARGO TUNNEL — LOKET</div></div>
       <div class="content">
-        <!-- Region / Node Selection -->
-        <div class="group">
-          <div class="eyebrow"><span>Pilih Region & Provider</span><span class="line"></span></div>
-          <select id="sel-node">
-            <option value="">⚡ Direct (Railway SG / Asli Server)</option>
-            ${(() => {
-              const groups = {};
-              nodes.forEach(n => {
-                const region = n.flag || '🌐';
-                if (!groups[region]) groups[region] = [];
-                groups[region].push(n);
-              });
-              return Object.keys(groups).map(region => `
-                <optgroup label="${esc(region)}">
-                  ${groups[region].map(n => `<option value="${esc(n.id)}">${esc(n.name)}</option>`).join('')}
-                </optgroup>
-              `).join('');
-            })()}
+
+        <!-- 1. REGION SELECTOR (ARGO MULTI-NODE) -->
+        <div class="group reveal">
+          <div class="group-head"><div class="group-line"></div><div class="eyebrow">1. Pilih Region & Provider Node (${nodes.length} Nodes)</div></div>
+          <select id="sel-node" class="select-field" onchange="onNodeChange()">
+            <option value="">⚡ Direct Egress (Railway SG / Asli Server)</option>
+            ${Object.keys(regionMap).sort().map(cc => `
+              <optgroup label="📍 REGION: ${esc(cc)} (${regionMap[cc].length} Provider Nodes)">
+                ${regionMap[cc].map(n => `<option value="${esc(n.id)}">${esc(n.name)}</option>`).join('')}
+              </optgroup>
+            `).join('')}
           </select>
         </div>
 
-        <!-- Bug SNI / Wildcard Chips -->
-        <div class="group">
-          <div class="eyebrow"><span>Bug SNI / Wildcard CDN</span><span class="line"></span></div>
-          <input id="inp-sni" placeholder="Custom SNI / bug domain (default: host server)" autocomplete="off">
-          <div class="wildcard-list" id="chips">
-            ${BUILTIN_WILDCARDS.map((w) => `<span class="chip" onclick="pickSni(this,'${esc(w)}')">${esc(w)}</span>`).join('')}
+        <!-- 2. SECURITY MODE (TLS vs Non-TLS) -->
+        <div class="group reveal">
+          <div class="group-head"><div class="group-line"></div><div class="eyebrow">2. Security Mode (Port 443 / 80)</div></div>
+          <div class="grid-2">
+            <button class="proto active" id="sec-tls" onclick="setSecurity('tls', this)">TLS (443 / HTTPS)</button>
+            <button class="proto" id="sec-ntls" onclick="setSecurity('none', this)">Non-TLS (80 / HTTP)</button>
           </div>
         </div>
 
-        <!-- Akun params (optional) -->
-        <div class="group">
-          <div class="eyebrow"><span>Pengaturan Akun</span><span class="line"></span></div>
-          <div class="row">
-            <div style="flex:2">
-              <label>Username (opsional)</label>
-              <input id="u" placeholder="acak otomatis" autocomplete="off">
-            </div>
-            <div style="flex:1">
-              <label>Masa aktif (hari)</label>
-              <input id="d" value="1" inputmode="numeric" max="${limits.perIp || 7}">
-            </div>
+        <!-- 3. PROTOCOL BUG SNI -->
+        <div class="group reveal">
+          <div class="group-head"><div class="group-line"></div><div class="eyebrow">Bug SNI</div></div>
+          <div class="grid-2">
+            <button class="proto" onclick="generate('native','vless',this)">VLESS</button>
+            <button class="proto" onclick="generate('native','trojan',this)">TROJAN</button>
           </div>
         </div>
 
-        <!-- Generate Button -->
-        <button class="btn-primary" id="btn-gen" onclick="generateAccount()">⚡ Generate Config Lengkap</button>
-        <div class="msg" id="msg"></div>
-
-        <!-- Results Display -->
-        <div id="result" style="display:none">
-          <div class="cfg-card">
-            <div class="eyebrow" id="res-title"><span>Config Siap Pakai</span><span class="line"></span></div>
-
-            <!-- VLESS -->
-            <div class="cfg-row">
-              <div class="cfg-val">
-                <label>VLESS WS (TLS)</label>
-                <code id="out-vless">-</code>
-              </div>
-              <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
-                <button class="btn-copy" onclick="copyText('out-vless',this)">Copy</button>
-                <div class="qr-box" id="qr-vless"></div>
-              </div>
-            </div>
-
-            <!-- Trojan -->
-            <div class="cfg-row" style="margin-top:14px">
-              <div class="cfg-val">
-                <label>TROJAN WS (TLS)</label>
-                <code id="out-trojan">-</code>
-              </div>
-              <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
-                <button class="btn-copy" onclick="copyText('out-trojan',this)">Copy</button>
-                <div class="qr-box" id="qr-trojan"></div>
-              </div>
-            </div>
-
-            <!-- SSH Direct + WS -->
-            <div class="cfg-row" style="margin-top:14px">
-              <div class="cfg-val">
-                <label>SSH Direct</label>
-                <code id="out-ssh">-</code>
-              </div>
-              <button class="btn-copy" onclick="copyText('out-ssh',this)">Copy</button>
-            </div>
-            <div class="cfg-row" style="margin-top:10px">
-              <div class="cfg-val">
-                <label>SSH-WS (HTTP Custom / Injector)</label>
-                <code id="out-ssh-ws">-</code>
-              </div>
-              <button class="btn-copy" onclick="copyText('out-ssh-ws',this)">Copy</button>
-            </div>
+        <!-- 4. PROTOCOL BUG CDN -->
+        <div class="group reveal">
+          <div class="group-head"><div class="group-line"></div><div class="eyebrow">Bug CDN</div></div>
+          <div class="grid-3">
+            <button class="proto" onclick="generate('argo','vless',this)">VLESS</button>
+            <button class="proto" onclick="generate('argo','vmess',this)">VMESS</button>
+            <button class="proto" onclick="generate('argo','trojan',this)">TROJAN</button>
           </div>
         </div>
 
-        <div class="footer">
-          Batas: ${limits.perIp} akun / 24 jam per IP · Host: <code>${esc(host || 'localhost')}</code>
+        <!-- 5. OUTPUT & INSTANT COPY -->
+        <div class="output">
+          <div class="field">
+            <input type="text" id="config-output" readonly placeholder="Klik salah satu protokol di atas untuk generate..." />
+          </div>
+          <button class="btn-copy" id="copy-btn" onclick="copyConfig()">Copy</button>
         </div>
+        <div class="hint" id="hint" style="text-align:center"></div>
+
+        <!-- 6. WILDCARD / BUG PRESETS -->
+        <div class="wildcard">
+          <div class="eyebrow">Bug Wildcard — CDN Supported (Klik untuk Terapkan)</div>
+          <div class="wildcard-list">
+            <span class="chip" onclick="pickBug('support.zoom.us', this)">support.zoom.us</span>
+            <span class="chip" onclick="pickBug('ava.game.naver.com', this)">ava.game.naver.com</span>
+            <span class="chip" onclick="pickBug('quiz.int.vidio.com', this)">quiz.int.vidio.com</span>
+            <span class="chip" onclick="pickBug('graph.instagram.com', this)">graph.instagram.com</span>
+            <span class="chip" onclick="pickBug('', this)">Default (Host Asli)</span>
+          </div>
+        </div>
+
       </div>
     </div>
-  </div>`;
 
-  const script = `
-  const defaultHost = ${hostJson};
-  const nodes = ${nodesJson};
-  let currentAccount = null;
-  let currentQr = null;
+    <!-- FOOTER -->
+    <div class="footer">
+      <a href="/admin" class="support-link">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        Admin Dashboard & Scanner
+      </a>
+    </div>
+  </div>
 
-  // 3D tilt lerp
-  (function(){
-    const shell = document.getElementById('shell');
-    if (!shell) return;
-    let tx=0, ty=0, cx=0, cy=0, running=false;
-    function loop(){
-      cx += (tx-cx)*0.07;
-      cy += (ty-cy)*0.07;
-      shell.style.transform = 'rotateY(' + cx.toFixed(3) + 'deg) rotateX(' + cy.toFixed(3) + 'deg)';
-      if (Math.abs(tx-cx) > 0.002 || Math.abs(ty-cy) > 0.002) {
-        requestAnimationFrame(loop);
-      } else { running = false; }
-    }
-    window.addEventListener('mousemove', (e) => {
-      if (window.matchMedia('(pointer: coarse)').matches) return;
-      tx = (e.clientX/window.innerWidth - 0.5) * 3.0;
-      ty = -(e.clientY/window.innerHeight - 0.5) * 2.5;
-      if (!running) { running = true; requestAnimationFrame(loop); }
-    }, { passive: true });
-  })();
+  <script>
+    let activeBtn = null;
+    let currentSecurity = 'tls';
+    let currentBug = '';
+    let currentNetwork = 'argo';
+    let currentProtocol = 'vless';
 
-  function pickSni(el, sni) {
-    const inp = document.getElementById('inp-sni');
-    if (el.classList.contains('active')) {
-      el.classList.remove('active');
-      inp.value = '';
-    } else {
-      document.querySelectorAll('#chips .chip').forEach(c => c.classList.remove('active'));
+    function setSecurity(sec, el) {
+      currentSecurity = sec;
+      document.querySelectorAll('#sec-tls, #sec-ntls').forEach(b => b.classList.remove('active'));
       el.classList.add('active');
-      inp.value = sni;
+      if (activeBtn) generate(currentNetwork, currentProtocol, activeBtn);
     }
-    if (currentAccount) refreshDisplay();
-  }
 
-  function copyText(elemId, btn) {
-    const el = document.getElementById(elemId);
-    if (!el) return;
-    const text = el.textContent;
-    navigator.clipboard.writeText(text).then(() => {
-      const old = btn.textContent;
-      btn.textContent = 'Copied ✓';
-      btn.classList.add('copied');
-      setTimeout(() => { btn.textContent = old; btn.classList.remove('copied'); }, 1400);
-    });
-  }
-
-  function applySniToLink(link, sni) {
-    if (!sni || !sni.trim()) return link;
-    const clean = sni.trim();
-    try {
-      const u = new URL(link);
-      u.searchParams.set('sni', clean);
-      u.searchParams.set('host', clean);
-      return u.toString();
-    } catch {
-      return link;
+    function pickBug(bug, el) {
+      currentBug = bug;
+      document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+      el.classList.add('active');
+      if (activeBtn) generate(currentNetwork, currentProtocol, activeBtn);
     }
-  }
 
-  function refreshDisplay() {
-    if (!currentAccount) return;
-    const sni = document.getElementById('inp-sni').value.trim();
-    const vless = applySniToLink(currentAccount.vless, sni);
-    const trojan = applySniToLink(currentAccount.trojan, sni);
+    function onNodeChange() {
+      if (activeBtn) generate(currentNetwork, currentProtocol, activeBtn);
+    }
 
-    document.getElementById('out-vless').textContent = vless;
-    document.getElementById('out-trojan').textContent = trojan;
-    document.getElementById('out-ssh').textContent = currentAccount.sshCommand;
-    document.getElementById('out-ssh-ws').textContent = currentAccount.sshWs;
-  }
+    async function generate(network, protocol, el) {
+      currentNetwork = network;
+      currentProtocol = protocol;
+      const outputEl = document.getElementById('config-output');
+      const hint = document.getElementById('hint');
+      if (activeBtn) activeBtn.classList.remove('active');
+      if (el) { el.classList.add('active'); activeBtn = el; }
+      outputEl.value = 'Generating config…';
+      hint.textContent = 'Menghubungkan ke node target…';
+      hint.style.display = 'block';
 
-  async function generateAccount() {
-    const btn = document.getElementById('btn-gen');
-    const msg = document.getElementById('msg');
-    const resBox = document.getElementById('result');
-    const username = document.getElementById('u').value.trim();
-    const days = Number(document.getElementById('d').value || 1);
-    const node = document.getElementById('sel-node').value;
-
-    btn.disabled = true;
-    msg.className = 'msg loading';
-    msg.textContent = 'Membuat akun & config…';
-
-    try {
-      const res = await fetch('/api/public/signup', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username, days, node }),
+      const nodeId = document.getElementById('sel-node').value;
+      const params = new URLSearchParams({
+        node: nodeId,
+        bug: currentBug,
+        sec: currentSecurity
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Gagal generate');
-
-      currentAccount = data.account;
-      currentQr = data.qr || {};
-
-      document.getElementById('res-title').innerHTML =
-        '<span>Config untuk <code>' + currentAccount.username + '</code> (exp: ' + currentAccount.expired + ')</span><span class="line"></span>';
-      document.getElementById('qr-vless').innerHTML = currentQr.vless || '';
-      document.getElementById('qr-trojan').innerHTML = currentQr.trojan || '';
-
-      refreshDisplay();
-      resBox.style.display = 'block';
-      msg.className = 'msg ok';
-      msg.textContent = 'Akun berhasil dibuat! Simpan config di bawah.';
-    } catch (err) {
-      msg.className = 'msg err';
-      msg.textContent = err.message;
-    } finally {
-      btn.disabled = false;
-    }
-  }
-
-  // Update on node change
-  document.getElementById('sel-node').onchange = () => {
-    if (currentAccount) {
-      // Prompt user to re-generate because path changes per node
-      document.getElementById('msg').className = 'msg';
-      document.getElementById('msg').textContent = 'Region berubah — klik Generate ulang untuk mendapatkan config node ini.';
-    }
-  };
-  document.getElementById('inp-sni').oninput = () => {
-    if (currentAccount) refreshDisplay();
-  };
-  `;
-
-  return `<!doctype html>
-<html lang="id">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>LOKET GRETONGAN · VPN Generator</title>
-<style>${CSS}</style>
-</head>
-<body>
-${body}
-<script>${script}</script>
-</body>
-</html>`;
-}
-
-// ------------------------------------------------------------------- admin
-
-function adminPage({ host }) {
-  const body = `
-  <div class="bg-image" aria-hidden="true"></div>
-  <div class="shell" style="max-width:820px">
-    <div class="panel">
-      <div class="header">
-        <div class="brand"><span class="dot"></span> LOKET · ADMIN MONITOR</div>
-        <div style="display:flex;gap:8px">
-          <a href="/" class="nav-link">← Public</a>
-          <a href="#" id="out" class="nav-link" style="display:none">Keluar</a>
-        </div>
-      </div>
-
-      <div class="content">
-        <div class="group" id="login">
-          <div class="eyebrow"><span>Masuk Admin</span><span class="line"></span></div>
-          <div class="row">
-            <input id="p" type="password" placeholder="ADMIN_PASS">
-            <button class="btn-primary" id="loginBtn" style="flex:0 0 120px">Masuk</button>
-          </div>
-          <div class="msg" id="lmsg"></div>
-        </div>
-
-        <div id="dash" style="display:none">
-          <div class="group">
-            <div class="eyebrow"><span>Daftar User</span><span class="muted" id="ucount"></span><span class="line"></span></div>
-            <table>
-              <thead><tr><th>User</th><th>IP</th><th>Expired</th><th>Trafik (VL/TJ)</th><th>Status</th><th>Aksi</th></tr></thead>
-              <tbody id="users"></tbody>
-            </table>
-          </div>
-
-          <div class="group">
-            <div class="eyebrow"><span>Status Node Keluar (Multi-Region)</span><span class="line"></span></div>
-            <table>
-              <thead><tr><th>Node</th><th>Proxy Egress</th><th>Status</th><th>Latensi</th></tr></thead>
-              <tbody id="nodes"></tbody>
-            </table>
-          </div>
-
-          <!-- Proxy Scanner / Import Tool -->
-          <div class="group" id="scanner">
-            <div class="eyebrow"><span>Auto-Scanner / Import Proxy Nodes</span><span class="line"></span></div>
-            <p class="muted" style="font-size:12px;margin-bottom:8px">
-              Input format teks/laporan ProxyCheck atau daftar proxy (<code>ip:port</code> / <code>ip:port:user:pass</code> / URL).
-            </p>
-            <div style="margin-bottom:8px">
-              <input type="file" id="scanFile" accept=".txt,.json" style="margin-bottom:6px">
-              <textarea id="scanText" placeholder="Atau paste daftar proxy di sini..." rows="4" style="font:inherit;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;color:var(--fg);background:rgba(12,16,22,0.6);border:1px solid var(--line);border-radius:10px;padding:8px 10px;width:100%;outline:none;resize:vertical"></textarea>
-            </div>
-            <div class="row" style="align-items:center">
-              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:0">
-                <input type="checkbox" id="scanSave" checked style="width:auto"> Otomatis simpan node verified ke volume (<code>nodes.json</code>)
-              </label>
-              <button class="btn-primary" id="btnScan" onclick="runScanner()" style="flex:0 0 160px;height:38px;font-size:12.5px">⚡ Start Scan</button>
-            </div>
-            <div class="msg" id="smsg"></div>
-            <div id="scanReport" style="display:none;margin-top:12px">
-              <div class="eyebrow" id="srepTitle"><span>Hasil Scan</span><span class="line"></span></div>
-              <table>
-                <thead><tr><th>Region</th><th>Proxy</th><th>Status</th><th>Exit IP</th><th>Latensi</th></tr></thead>
-                <tbody id="scanTable"></tbody>
-              </table>
-            </div>
-          </div>
-
-          <div class="group">
-            <div class="eyebrow"><span>Aktivitas IP</span><span class="line"></span></div>
-            <table>
-              <thead><tr><th>IP Client</th><th>User</th><th>Koneksi</th><th>Terakhir</th><th>Aksi</th></tr></thead>
-              <tbody id="ips"></tbody>
-            </table>
-          </div>
-        </div>
-
-        <div class="footer">
-          Host: <code>${esc(host || 'localhost')}</code>
-        </div>
-      </div>
-    </div>
-  </div>`;
-
-  const script = `
-  let csrf = '';
-  const $ = (id) => document.getElementById(id);
-
-  async function api(path, opts = {}) {
-    const res = await fetch(path, {
-      credentials: 'same-origin',
-      headers: { 'content-type': 'application/json', 'x-csrf-token': csrf },
-      ...opts,
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || res.statusText);
-    return data;
-  }
-
-  $('loginBtn').onclick = async () => {
-    try {
-      const r = await api('/api/login', { method: 'POST', body: JSON.stringify({ password: $('p').value }) });
-      csrf = r.csrf;
-      $('login').style.display = 'none';
-      $('dash').style.display = 'block';
-      $('out').style.display = 'inline-block';
-      load();
-    } catch (e) { $('lmsg').className = 'msg err'; $('lmsg').textContent = e.message; }
-  };
-  $('out').onclick = async (e) => { e.preventDefault(); await api('/api/logout', { method: 'POST' }); location.reload(); };
-
-  const fmt = (n) => n > 1048576 ? (n/1048576).toFixed(1)+' MB' : n > 1024 ? (n/1024).toFixed(0)+' KB' : (n||0)+' B';
-
-  async function load() {
-    try {
-      const d = await api('/api/admin/overview');
-      $('ucount').textContent = ' (' + d.users.length + ')';
-      $('users').innerHTML = d.users.map(u => '<tr>' +
-        '<td><code>' + u.username + '</code></td>' +
-        '<td>' + (u.ip || '-') + '</td>' +
-        '<td>' + u.expired + '</td>' +
-        '<td>' + fmt(u.bytes.vless) + ' / ' + fmt(u.bytes.trojan) + '</td>' +
-        '<td>' + (u.active ? '<span class="badge ok">aktif</span>' : '<span class="badge bad">nonaktif</span>') + '</td>' +
-        '<td style="white-space:nowrap">' +
-          (u.ip ? '<button class="small ghost" onclick="toggleIp(\\'' + u.ip + '\\', true)">blok ip</button> ' : '') +
-          '<button class="small danger" onclick="del(\\'' + u.username + '\\')">hapus</button>' +
-        '</td></tr>').join('') || '<tr><td colspan="6" class="muted">belum ada user</td></tr>';
 
       try {
-        const nd = await api('/api/admin/nodes');
-        $('nodes').innerHTML = nd.nodes.map(n => '<tr>' +
-          '<td>' + (n.flag || '') + ' <code>' + n.id + '</code> ' + n.name + '</td>' +
-          '<td>' + (n.proxy ? '<span class="badge">proxy</span>' : '<span class="badge">direct</span>') + '</td>' +
-          '<td>' + (n.ok ? '<span class="badge ok">ok</span>' : '<span class="badge bad">' + n.note + '</span>') + '</td>' +
-          '<td>' + n.ms + ' ms</td></tr>').join('') || '<tr><td colspan="4" class="muted">belum ada node</td></tr>';
-      } catch (e) {}
-
-      $('ips').innerHTML = d.ips.map(i => '<tr>' +
-        '<td><code>' + i.ip + '</code> ' + (i.blocked ? '<span class="badge bad">blok</span>' : '') + '</td>' +
-        '<td>' + ((i.users||[]).join(', ') || '-') + '</td>' +
-        '<td>' + i.conns + '</td>' +
-        '<td>' + (i.lastSeen ? new Date(i.lastSeen).toLocaleString() : '-') + '</td>' +
-        '<td><button class="small ghost" onclick="toggleIp(\\'' + i.ip + '\\', ' + (i.blocked ? 'false' : 'true') + ')">' + (i.blocked ? 'buka' : 'blok') + '</button></td>' +
-      '</tr>').join('') || '<tr><td colspan="5" class="muted">belum ada aktivitas</td></tr>';
-    } catch (e) {
-      console.error(e);
+        const res = await fetch('/api/config?' + params.toString());
+        const data = await res.json();
+        const val = data[network][protocol];
+        outputEl.value = val || '';
+        hint.textContent = 'Konfigurasi siap digunakan!';
+      } catch (e) {
+        outputEl.value = '';
+        hint.textContent = 'Gagal generate konfigurasi.';
+      }
     }
-  }
 
-  window.toggleIp = async (ip, block) => { await api('/api/admin/block', { method: 'POST', body: JSON.stringify({ type: 'ip', value: ip, block }) }); load(); };
-  window.del = async (username) => {
-    if (!confirm('Hapus ' + username + '?')) return;
-    await api('/api/admin/users?username=' + encodeURIComponent(username), { method: 'DELETE' }); load();
-  };
+    // Smooth eased 3D tilt (ARGO-NODE LERP)
+    (function(){
+      const shell = document.getElementById('shell');
+      if(!shell) return;
+      let tx=0, ty=0, cx=0, cy=0, running=false;
+      function loop(){
+        cx += (tx-cx)*0.07;
+        cy += (ty-cy)*0.07;
+        shell.style.transform = 'rotateY(' + cx.toFixed(3) + 'deg) rotateX(' + cy.toFixed(3) + 'deg)';
+        if(Math.abs(tx-cx) > 0.002 || Math.abs(ty-cy) > 0.002){
+          requestAnimationFrame(loop);
+        } else { running = false; }
+      }
+      window.addEventListener('mousemove', (e)=>{
+        if(window.matchMedia('(pointer: coarse)').matches) return;
+        tx = (e.clientX/window.innerWidth - 0.5) * 3.2;
+        ty = -(e.clientY/window.innerHeight - 0.5) * 2.6;
+        if(!running){ running = true; requestAnimationFrame(loop); }
+      }, {passive:true});
+    })();
 
-  $('scanFile').onchange = (e) => {
-    const f = e.target.files[0];
-    if (!f) return;
-    const r = new FileReader();
-    r.onload = (ev) => { $('scanText').value = ev.target.result; };
-    r.readAsText(f);
-  };
+    // Staggered reveal animations
+    (function(){
+      const io = new IntersectionObserver((entries)=>{
+        entries.forEach(en=>{ if(en.isIntersecting) en.target.classList.add('in'); });
+      }, {threshold:0.12});
+      document.querySelectorAll('.group.reveal').forEach(el=> io.observe(el));
+      requestAnimationFrame(()=> document.querySelectorAll('.group.reveal').forEach((el,i)=> setTimeout(()=> el.classList.add('in'), 120*i)));
+    })();
 
-  window.runScanner = async () => {
-    const text = $('scanText').value.trim();
-    const save = $('scanSave').checked;
-    const btn = $('btnScan');
-    const msg = $('smsg');
-    const repBox = $('scanReport');
-    if (!text) {
-      msg.className = 'msg err'; msg.textContent = 'Pilih file atau paste teks proxy terlebih dahulu.';
-      return;
-    }
-    btn.disabled = true;
-    msg.className = 'msg loading'; msg.textContent = 'Memindai & mengetes egress ke ip-api... (bisa memakan waktu)';
-    try {
-      const res = await api('/api/admin/scan', {
-        method: 'POST',
-        body: JSON.stringify({ text, save, concurrency: 8 }),
+    function copyConfig(){
+      const el = document.getElementById('config-output');
+      const hint = document.getElementById('hint');
+      if(!el.value || el.value.includes('…')) return;
+      navigator.clipboard.writeText(el.value).then(()=>{
+        const btn = document.getElementById('copy-btn');
+        btn.textContent = 'Copied!';
+        if(hint){ hint.textContent = 'Copied to clipboard.'; hint.style.display='block'; }
+        setTimeout(()=>{ btn.textContent='Copy'; }, 1800);
+      }).catch(()=>{
+        el.select();
+        document.execCommand('copy');
+        const btn = document.getElementById('copy-btn');
+        btn.textContent = 'Copied!';
+        setTimeout(()=> btn.textContent='Copy', 1500);
       });
-      msg.className = 'msg ok';
-      msg.textContent = 'Selesai: ' + res.live + ' / ' + res.total + ' node hidup & lolos verifikasi.' + (res.saved ? ' Tersimpan ke nodes.json!' : '');
-      $('srepTitle').innerHTML = '<span>Hasil Scan (' + res.live + ' live)</span><span class="line"></span>';
-      $('scanTable').innerHTML = res.nodes.map(n => '<tr>' +
-        '<td>' + (n.flag || '') + ' <code>' + n.id + '</code> ' + n.name + '</td>' +
-        '<td><code>' + n.proxy + '</code></td>' +
-        '<td><span class="badge ok">live</span></td>' +
-        '<td>' + (n.exitIp || '-') + '</td>' +
-        '<td>' + (n.lat ? n.lat + ' ms' : '-') + '</td>' +
-      '</tr>').join('') || '<tr><td colspan="5" class="muted">tidak ada node yang hidup</td></tr>';
-      repBox.style.display = 'block';
-      if (res.saved) load();
-    } catch (err) {
-      msg.className = 'msg err'; msg.textContent = err.message;
-    } finally {
-      btn.disabled = false;
     }
-  };
+  </script>
+</body>
+</html>
+`;
+}
 
-  api('/api/me').then(() => {
-    $('login').style.display = 'none';
-    $('dash').style.display = 'block';
-    $('out').style.display = 'inline-block';
-    load();
-  }).catch(() => {});
-  `;
-
-  return `<!doctype html>
+function adminPage({ host = '' } = {}) {
+  // Admin page layout
+  return `<!DOCTYPE html>
 <html lang="id">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>LOKET GRETONGAN · Admin</title>
-<style>${CSS}</style>
+  <meta charset="UTF-8">
+  <title>Admin Dashboard & Scanner — Loket</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body{background:#0a0c10;color:#e8e8e8;font-family:sans-serif;padding:24px}
+    .card{background:#12151c;border:1px solid #282e3d;border-radius:12px;padding:20px;max-width:800px;margin:0 auto 20px}
+    h2{margin-bottom:12px;color:#fff}
+    textarea{width:100%;height:150px;background:#0d0f14;border:1px solid #333;color:#fff;border-radius:8px;padding:10px;font-family:monospace}
+    button{background:#3b82f6;color:#fff;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-weight:bold;margin-top:10px}
+    button:hover{background:#2563eb}
+    .status{margin-top:10px;font-size:13px;color:#94a3b8}
+  </style>
 </head>
 <body>
-${body}
-<script>${script}</script>
+  <div class="card">
+    <h2>⚡ Proxy Scanner & Node Importer</h2>
+    <p style="font-size:13px;color:#94a3b8;margin-bottom:12px">Paste proxy raw / ProxyCheck report atau upload file txt untuk update multi-node.</p>
+    <textarea id="proxy-input" placeholder="Paste proxy report di sini..."></textarea>
+    <div>
+      <input type="file" id="file-input" accept=".txt" style="margin-top:10px" />
+    </div>
+    <button onclick="startScan()">⚡ Start Scan & Hot-Reload</button>
+    <div id="scan-status" class="status"></div>
+  </div>
+
+  <script>
+    document.getElementById('file-input').addEventListener('change', function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        document.getElementById('proxy-input').value = evt.target.result;
+      };
+      reader.readAsText(file);
+    });
+
+    async function startScan() {
+      const text = document.getElementById('proxy-input').value;
+      const status = document.getElementById('scan-status');
+      if (!text.trim()) return alert('Paste proxy report dulu!');
+      status.textContent = 'Scanning and verifying nodes... mohon tunggu...';
+      try {
+        const res = await fetch('/api/admin/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ raw: text, autoSave: true })
+        });
+        const d = await res.json();
+        status.textContent = 'Selesai! Live nodes: ' + d.live + ' / ' + d.total + '. Volume updated!';
+      } catch (e) {
+        status.textContent = 'Error: ' + e.message;
+      }
+    }
+  </script>
 </body>
 </html>`;
 }
 
-module.exports = {
-  publicPage,
-  adminPage,
-  qrSvg: (text) => QR.toString(text, { type: 'svg', margin: 0, width: 100 }),
-};
+module.exports = { publicPage, adminPage };

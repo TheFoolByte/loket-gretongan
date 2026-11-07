@@ -13,7 +13,7 @@ const path = require('node:path');
 const net = require('node:net');
 const { parseProxy } = require('./upstream');
 
-const ID_RE = /^[a-z0-9-]{2,16}$/;
+const ID_RE = /^[a-z0-9-]{2,32}$/;
 
 /**
  * Node sources (raw JSON arrays), first non-empty wins:
@@ -27,7 +27,14 @@ function loadNodes(raw = process.env.NODES, file = process.env.NODES_FILE || pat
     parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (!Array.isArray(parsed) || parsed.length === 0) parsed = null;
   } catch {
-    /* no nodes file -> fall back to env */
+    /* no nodes file -> fall back to default verified */
+    try {
+      const fallback = path.join(__dirname, '..', 'nodes.verified.json');
+      parsed = JSON.parse(fs.readFileSync(fallback, 'utf8'));
+      if (!Array.isArray(parsed) || parsed.length === 0) parsed = null;
+    } catch {
+      /* ignore */
+    }
   }
   if (parsed === null) {
     if (!raw || !raw.trim()) return [];
@@ -43,7 +50,7 @@ function loadNodes(raw = process.env.NODES, file = process.env.NODES_FILE || pat
     return [];
   }
   const nodes = [];
-  for (const item of parsed.slice(0, 48)) {
+  for (const item of parsed.slice(0, 256)) {
     const id = String(item?.id || '').toLowerCase().trim();
     if (!ID_RE.test(id)) {
       console.error(`[loket] node skipped (bad id): ${JSON.stringify(item?.id)}`);
@@ -65,7 +72,7 @@ function loadNodes(raw = process.env.NODES, file = process.env.NODES_FILE || pat
     }
     nodes.push({
       id,
-      name: String(item.name || id).slice(0, 32),
+      name: String(item.name || id).slice(0, 48),
       flag: String(item.flag || '').slice(0, 8),
       proxy,
     });
