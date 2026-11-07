@@ -93,6 +93,17 @@ function publicPage({ host = '', nodes = [] } = {}) {
         const nodes = ${JSON.stringify(nodes)};
         let page = 0;
 
+        function parseEndpoint(proxyStr) {
+            try {
+                const raw = proxyStr || '';
+                const hasScheme = raw.startsWith('http://') || raw.startsWith('https://') || raw.startsWith('socks5://');
+                const u = new URL(hasScheme ? raw : 'http://' + raw);
+                return { ip: u.hostname, port: u.port || '80' };
+            } catch {
+                return { ip: '127.0.0.1', port: '80' };
+            }
+        }
+
         function getFlag(cc) {
             return (cc || 'XX').replace(/./g, c => String.fromCodePoint(127397 + c.charCodeAt(0)));
         }
@@ -120,19 +131,16 @@ function publicPage({ host = '', nodes = [] } = {}) {
                 container.innerHTML = '<div class="p-8 text-center text-gray-500 text-sm">No proxy nodes found matching filter.</div>';
             } else {
                 container.innerHTML = slice.map((n, i) => {
-                    const hostPort = (n.proxy || '').split('@')[1] || '';
-                    const parts = hostPort.split(':');
-                    const ip = parts[0] || '127.0.0.1';
-                    const port = parts[1] || '80';
+                    const ep = parseEndpoint(n.proxy);
                     const idx = page * 20 + i;
                     return \`
                         <div class="vpn-row">
                             <div class="vpn-info">
                                 <span class="text-2xl">\${getFlag(n.flag || n.cc)}</span>
                                 <div class="flex-1 min-w-0">
-                                    <div class="text-[13px] font-mono font-semibold truncate text-white">\${ip}</div>
+                                    <div class="text-[13px] font-mono font-semibold truncate text-white">\${ep.ip}</div>
                                     <div class="text-[10px] text-gray-400 uppercase tracking-wider truncate">\${n.name || n.id}</div>
-                                    <div id="status-\${idx}" class="text-[10px] font-bold mt-0.5" data-ip="\${ip}" data-port="\${port}">
+                                    <div id="status-\${idx}" class="text-[10px] font-bold mt-0.5" data-ip="\${ep.ip}" data-port="\${ep.port}">
                                         <span class="nb-skel"></span>
                                     </div>
                                 </div>
@@ -151,10 +159,9 @@ function publicPage({ host = '', nodes = [] } = {}) {
             \`;
             
             slice.forEach((n, i) => {
-                const hostPort = (n.proxy || '').split('@')[1] || '';
-                const parts = hostPort.split(':');
+                const ep = parseEndpoint(n.proxy);
                 const idx = page * 20 + i;
-                setTimeout(() => checkStatus(idx, parts[0], parts[1]), i * 80);
+                setTimeout(() => checkStatus(idx, ep.ip, ep.port), i * 80);
             });
         }
 

@@ -220,11 +220,15 @@ const server = http.createServer(async (req, res) => {
     const pIp = url.searchParams.get('ip');
     const pPort = url.searchParams.get('port');
     if (!pIp || !pPort) return json(res, 400, { error: 'Missing params' });
-    const result = await probeNode({ proxy: `${pIp}:${pPort}` });
-    return json(res, 200, { 
-      status: result.ok ? 'Active' : 'Offline', 
-      ping_ms: result.ms 
-    });
+    try {
+      const result = await probeNode({ proxy: `http://${pIp}:${pPort}` });
+      return json(res, 200, { 
+        status: result.ok ? 'Active' : 'Offline', 
+        ping_ms: result.ms 
+      });
+    } catch (e) {
+      return json(res, 200, { status: 'Offline', error: e.message });
+    }
   }
 
   // ---- public config endpoint (argo-node full parity) ----
