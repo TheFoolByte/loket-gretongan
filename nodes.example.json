@@ -1,0 +1,164 @@
+[
+  {
+    "id": "au",
+    "name": "Australia",
+    "flag": "AU",
+    "proxy": "http://g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2@au-syd.pvdata.host:8080"
+  },
+  {
+    "id": "br",
+    "name": "Brazil",
+    "flag": "BR",
+    "proxy": "http://g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2@br-sao.pvdata.host:8080"
+  },
+  {
+    "id": "ca",
+    "name": "Canada",
+    "flag": "CA",
+    "proxy": "http://nWtrJqsb:RYYEE72Y@194.33.9.136:49520"
+  },
+  {
+    "id": "ch",
+    "name": "Switzerland",
+    "flag": "CH",
+    "proxy": "http://185.191.239.248:3128"
+  },
+  {
+    "id": "cm",
+    "name": "Cameroon",
+    "flag": "CM",
+    "proxy": "http://102.244.78.61:8080"
+  },
+  {
+    "id": "cn",
+    "name": "China",
+    "flag": "CN",
+    "proxy": "http://120.232.115.57:17981"
+  },
+  {
+    "id": "cy",
+    "name": "Cyprus",
+    "flag": "CY",
+    "proxy": "http://g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2@cy-lim.pvdata.host:8080"
+  },
+  {
+    "id": "de",
+    "name": "Germany",
+    "flag": "DE",
+    "proxy": "http://103.237.102.191:11111"
+  },
+  {
+    "id": "ee",
+    "name": "Estonia",
+    "flag": "EE",
+    "proxy": "http://tickets:proxyon145@104.160.17.116:12345"
+  },
+  {
+    "id": "es",
+    "name": "Spain",
+    "flag": "ES",
+    "proxy": "http://tickets:proxyon145@191.102.165.164:12345"
+  },
+  {
+    "id": "fr",
+    "name": "France",
+    "flag": "FR",
+    "proxy": "http://g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2@fr-par.pvdata.host:8080"
+  },
+  {
+    "id": "gb",
+    "name": "United Kingdom",
+    "flag": "GB",
+    "proxy": "http://198.244.254.77:3128"
+  },
+  {
+    "id": "hk",
+    "name": "Hong Kong",
+    "flag": "HK",
+    "proxy": "socks5://123.58.219.171:10808"
+  },
+  {
+    "id": "in",
+    "name": "India",
+    "flag": "IN",
+    "proxy": "http://152.67.191.232:6800"
+  },
+  {
+    "id": "it",
+    "name": "Italy",
+    "flag": "IT",
+    "proxy": "http://hughmuir2:lisamarie11@it1.cactussstp.com:8080"
+  },
+  {
+    "id": "jp",
+    "name": "Japan",
+    "flag": "JP",
+    "proxy": "socks5://101.36.104.239:10808"
+  },
+  {
+    "id": "nl",
+    "name": "Netherlands",
+    "flag": "NL",
+    "proxy": "http://tickets:proxyon145@185.122.170.10:12345"
+  },
+  {
+    "id": "pt",
+    "name": "Portugal",
+    "flag": "PT",
+    "proxy": "http://hughmuir2:lisamarie11@pt1.cactussstp.com:3129"
+  },
+  {
+    "id": "ro",
+    "name": "Romania",
+    "flag": "RO",
+    "proxy": "http://uncpjndo:w77Ebc0h2A@ro1.cactussstp.com:3129"
+  },
+  {
+    "id": "ru",
+    "name": "Russian Federation",
+    "flag": "RU",
+    "proxy": "http://uncpjndo:w77Ebc0h2A@ru1.cactussstp.com:81"
+  },
+  {
+    "id": "sa",
+    "name": "Saudi Arabia",
+    "flag": "SA",
+    "proxy": "http://130.110.103.245:3128"
+  },
+  {
+    "id": "se",
+    "name": "Sweden",
+    "flag": "SE",
+    "proxy": "http://176.111.37.5:39811"
+  },
+  {
+    "id": "sg",
+    "name": "Singapore",
+    "flag": "SG",
+    "proxy": "http://4.144.146.21:80"
+  },
+  {
+    "id": "th",
+    "name": "Thailand",
+    "flag": "TH",
+    "proxy": "http://s6402013510115:s1609900520681@202.28.17.8:8080"
+  },
+  {
+    "id": "us",
+    "name": "United States",
+    "flag": "US",
+    "proxy": "socks5://150.136.58.221:1080"
+  },
+  {
+    "id": "uz",
+    "name": "Uzbekistan",
+    "flag": "UZ",
+    "proxy": "http://90.156.160.234:3128"
+  },
+  {
+    "id": "vn",
+    "name": "Viet Nam",
+    "flag": "VN",
+    "proxy": "http://azqdr5vn:71WCPuMwyc72@103.183.121.211:11657"
+  }
+]

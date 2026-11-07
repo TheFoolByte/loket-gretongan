@@ -7,8 +7,9 @@
   "type": "commonjs",
   "scripts": {
     "start": "node src/server.js",
-    "check": "node --check src/server.js && node --check src/auth.js && node --check src/users.js && node --check src/vless.js && node --check src/net-guard.js && node --check src/ssh-ws.js",
-    "test": "node test/smoke.js && node test/upstream.js"
+    "check": "node --check src/server.js && node --check src/auth.js && node --check src/users.js && node --check src/vless.js && node --check src/net-guard.js && node --check src/ssh-ws.js && node --check scripts/import-nodes.js && node --check scripts/probe-nodes.js",
+    "probe": "node scripts/probe-nodes.js",
+    "test": "node test/smoke.js && node test/upstream.js && node test/vless.js && node test/import-nodes.js"
   },
   "dependencies": {
     "qrcode": "^1.5.4",

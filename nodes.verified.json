@@ -1,0 +1,80 @@
+[
+  {
+    "id": "ca",
+    "name": "Canada",
+    "flag": "CA",
+    "proxy": "http://nWtrJqsb:RYYEE72Y@194.33.9.136:49520"
+  },
+  {
+    "id": "cm",
+    "name": "Cameroon",
+    "flag": "CM",
+    "proxy": "http://102.244.78.61:8080"
+  },
+  {
+    "id": "cy",
+    "name": "Cyprus",
+    "flag": "CY",
+    "proxy": "http://g2rTXpNfPdcw2fzGtWKp62yH:nizar1elad2@cy-lim.pvdata.host:8080"
+  },
+  {
+    "id": "de",
+    "name": "Germany",
+    "flag": "DE",
+    "proxy": "http://103.237.102.191:11111"
+  },
+  {
+    "id": "es",
+    "name": "Spain",
+    "flag": "ES",
+    "proxy": "http://tickets:proxyon145@191.102.165.164:12345"
+  },
+  {
+    "id": "hk",
+    "name": "Hong Kong",
+    "flag": "HK",
+    "proxy": "socks5://123.58.219.171:10808"
+  },
+  {
+    "id": "it",
+    "name": "Italy",
+    "flag": "IT",
+    "proxy": "http://hughmuir2:lisamarie11@it1.cactussstp.com:8080"
+  },
+  {
+    "id": "jp",
+    "name": "Japan",
+    "flag": "JP",
+    "proxy": "socks5://101.36.104.239:10808"
+  },
+  {
+    "id": "nl",
+    "name": "Netherlands",
+    "flag": "NL",
+    "proxy": "http://tickets:proxyon145@185.122.170.10:12345"
+  },
+  {
+    "id": "pt",
+    "name": "Portugal",
+    "flag": "PT",
+    "proxy": "http://hughmuir2:lisamarie11@pt1.cactussstp.com:3129"
+  },
+  {
+    "id": "us",
+    "name": "United States",
+    "flag": "US",
+    "proxy": "socks5://150.136.58.221:1080"
+  },
+  {
+    "id": "uz",
+    "name": "Uzbekistan",
+    "flag": "UZ",
+    "proxy": "http://90.156.160.234:3128"
+  },
+  {
+    "id": "vn",
+    "name": "Viet Nam",
+    "flag": "VN",
+    "proxy": "http://azqdr5vn:71WCPuMwyc72@103.183.121.211:11657"
+  }
+]

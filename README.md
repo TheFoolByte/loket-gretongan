@@ -87,6 +87,49 @@ Alurnya: client tetap menghubungi domain kamu; relay keluar lewat proxy node itu
 jadi **exit IP benar-benar di negara tersebut**. Panel menampilkan pilihan node,
 `/admin` menampilkan status + latensi tiap node (`/api/admin/nodes`).
 
+Daftar panjang (banyak negara): taruh array yang sama di file volume
+**`/data/nodes.json`** — file menang dari env `NODES`, dan tidak perlu diedit
+di panel Railway tiap ganti node (max 48 node).
+
+`nodes.example.json` berisi **semua 27 negara** yang ada di laporan proxy
+(1 node per negara). **MY tidak ada di laporan tersebut** — bukan disembunyikan
+atau diganti region lain.
+
+Impor laporan scan sendiri secara offline:
+
+```bash
+# semua negara, deteksi scheme otomatis dari port (1080/10808 → SOCKS5)
+node scripts/import-nodes.js result_proxy.txt nodes.json --regions '*'
+# negara tertentu saja
+node scripts/import-nodes.js result_proxy.txt nodes.json --regions SG,JP,US
+# paksa satu transport untuk semua node
+node scripts/import-nodes.js result_proxy.txt nodes.json --scheme socks5
+# lalu upload nodes.json ke /data/nodes.json di volume Railway.
+```
+
+Deteksi `--scheme auto` (default) menebak protokol dari port: `1080`/`10808`
+(dan apa pun yang dikasih via `--socks-ports`) dianggap SOCKS5, sisanya HTTP
+CONNECT. Laporan scanner tidak mencatat jenis protokol, jadi pastikan port
+benar-benar SOCKS5 — kalau ragu pakai `--scheme http`/`--scheme socks5` untuk
+memaksa. Hanya status `Live` yang diambil, maksimal satu node per negara;
+import offline, tidak menguji atau mengklaim endpoint masih hidup. Env
+`NODES`/`nodes.json` tetap mendukung HTTP CONNECT dan SOCKS5 dengan
+autentikasi user/password.
+
+Cek node sebelum deploy (handshake beneran + exit IP & negara lewat tunnel):
+
+```bash
+node scripts/probe-nodes.js nodes.example.json --write nodes.verified.json
+# atau: npm run probe -- nodes.example.json --write nodes.verified.json
+```
+
+Probe menjalankan SOCKS5/HTTP CONNECT sungguhan, lalu (kalau bisa) meminta
+`ip-api.com` lewat tunnel untuk membaca **exit IP + negara asli**. Node yang
+exit-nya beda negara dari flag-nya ditandai `<-- expected XX`; `--write` hanya
+menulis node yang hidup dan region-nya cocok (atau tak terbaca) ke file hasil.
+Hasil scan bukan jaminan — jalankan ulang sebelum dipakai karena proxy hasil
+scan orang lain sering mati/berganti.
+
 Catatan jujur:
 
 - Proxy harus milikmu (VPS $3/negara atau provider residential/datacenter berbayar).

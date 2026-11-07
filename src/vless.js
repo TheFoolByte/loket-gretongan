@@ -218,11 +218,11 @@ function attachVless(ws, { kind, users, stats, log = console, isBlocked = () => 
     }
     remote = socket;
     socket.setNoDelay(true);
-    socket.on('connect', () => {
-      const resp = kind === 'trojan' ? trojanResponseHeader() : vlessResponseHeader(header.version);
-      if (resp.length && ws.readyState === ws.OPEN) ws.send(resp);
-      if (header.rawClientData.length) socket.write(header.rawClientData);
-    });
+    // An upstream handshake returns an already-connected socket: its `connect`
+    // event has already fired, so waiting for that event would stall the relay.
+    const resp = kind === 'trojan' ? trojanResponseHeader() : vlessResponseHeader(header.version);
+    if (resp.length && ws.readyState === ws.OPEN) ws.send(resp);
+    if (header.rawClientData.length) socket.write(header.rawClientData);
     socket.on('data', (data) => {
       stats.tx += data.length;
       bytesOut += data.length;

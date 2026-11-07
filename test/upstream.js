@@ -7,7 +7,10 @@
 'use strict';
 
 const assert = require('node:assert');
+const fs = require('node:fs');
 const net = require('node:net');
+const os = require('node:os');
+const path = require('node:path');
 const { openEgress } = require('../src/upstream');
 const { loadNodes } = require('../src/nodes');
 
@@ -195,7 +198,19 @@ function roundTrip(socket, payload = 'ping') {
     assert.equal(nodes.length, 1, 'invalid and duplicate node ids dropped');
     assert.equal(nodes[0].id, 'sg');
     assert.equal(loadNodes('').length, 0, 'empty env = direct only');
-    assert.equal(loadNodes('not json').length, 0, 'broken json ignored');
+    assert.equal(loadNodes('not json', path.join(os.tmpdir(), 'loket-nodes-none.json')).length, 0, 'broken json ignored');
+
+    // nodes.json on the volume wins over the NODES env
+    const nodeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loket-nodes-'));
+    fs.writeFileSync(path.join(nodeDir, 'nodes.json'), JSON.stringify([
+      { id: 'my', name: 'Malaysia', flag: 'MY', proxy: 'socks5://a:b@1.2.3.4:1080' },
+    ]));
+    const fromFile = loadNodes('not json', path.join(nodeDir, 'nodes.json'));
+    assert.equal(fromFile.length, 1, 'nodes file loads even when env is broken');
+    assert.equal(fromFile[0].id, 'my');
+    const fromEnv = loadNodes('[{"id":"us","name":"United States","flag":"US"}]', path.join(nodeDir, 'missing.json'));
+    assert.equal(fromEnv.length, 1, 'env fallback when nodes file is absent');
+    assert.equal(fromEnv[0].id, 'us');
     console.log('node registry: ok');
 
     console.log('\nupstream: all assertions passed');

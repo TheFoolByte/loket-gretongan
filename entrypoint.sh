@@ -100,6 +100,7 @@ start_web() {
     SIGNUP_BURST="${SIGNUP_BURST:-5}" \
     DROPBEAR_LOG="${DATA_DIR}/dropbear.log" \
     ALLOW_PRIVATE_TARGETS="${ALLOW_PRIVATE_TARGETS:-0}" \
+    NODES="${NODES:-}" \
     node /app/src/server.js &
   pids+=("$!")
 }

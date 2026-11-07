@@ -8,26 +8,42 @@
  */
 'use strict';
 
+const fs = require('node:fs');
+const path = require('node:path');
 const net = require('node:net');
 const { parseProxy } = require('./upstream');
 
 const ID_RE = /^[a-z0-9-]{2,16}$/;
 
-function loadNodes(raw = process.env.NODES) {
-  if (!raw || !raw.trim()) return [];
-  let parsed;
+/**
+ * Node sources (raw JSON arrays), first non-empty wins:
+ *   1. file — $DATA_DIR/nodes.json (or NODES_FILE). Lives on the volume,
+ *      survives deploys, suits long region lists.
+ *   2. NODES env — quick start, one-line lists.
+ */
+function loadNodes(raw = process.env.NODES, file = process.env.NODES_FILE || path.join(process.env.DATA_DIR || '/data', 'nodes.json')) {
+  let parsed = null;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!Array.isArray(parsed) || parsed.length === 0) parsed = null;
   } catch {
-    console.error('[loket] NODES is not valid JSON — ignoring');
-    return [];
+    /* no nodes file -> fall back to env */
+  }
+  if (parsed === null) {
+    if (!raw || !raw.trim()) return [];
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      console.error('[loket] NODES is not valid JSON — ignoring');
+      return [];
+    }
   }
   if (!Array.isArray(parsed)) {
-    console.error('[loket] NODES must be a JSON array — ignoring');
+    console.error('[loket] nodes must be a JSON array — ignoring');
     return [];
   }
   const nodes = [];
-  for (const item of parsed.slice(0, 12)) {
+  for (const item of parsed.slice(0, 48)) {
     const id = String(item?.id || '').toLowerCase().trim();
     if (!ID_RE.test(id)) {
       console.error(`[loket] node skipped (bad id): ${JSON.stringify(item?.id)}`);
