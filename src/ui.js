@@ -1,228 +1,321 @@
 'use strict';
 
-function esc(s = '') {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-
 function publicPage({ host = '', nodes = [] } = {}) {
+  const payload = JSON.stringify(nodes.map((n) => ({
+    id: n.id,
+    name: n.name || n.id,
+    flag: (n.flag || n.cc || 'XX').toUpperCase(),
+    proxy: n.proxy || '',
+  }))).replace(/</g, '\\u003c');
+
   return `<!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Loket VPN | Catalog</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-    <style>
-        :root { --bg: #0a0a0c; --fg: #fafafa; --card: rgba(22,22,26,0.7); --card-border: rgba(255,255,255,0.08); }
-        body { background-color: var(--bg); color: var(--fg); font-family: -apple-system, sans-serif; }
-        .ui-card { background: var(--card); backdrop-filter: blur(20px); border: 1px solid var(--card-border); border-radius: 16px; overflow: hidden; }
-        .vpn-row { display: flex; flex-direction: row; align-items: stretch; border-bottom: 1px solid var(--card-border); transition: background 0.15s; }
-        .vpn-row:hover { background: rgba(255,255,255,0.03); }
-        .vpn-info { display: flex; align-items: center; gap: 14px; flex: 1; padding: 12px 18px; min-width: 0; }
-        .vpn-copy { width: 56px; flex: 0 0 56px; display: flex; align-items: center; justify-content: center; cursor: pointer; border: none; background: transparent; color: #fff; transition: all .2s ease; border-left: 1px solid var(--card-border); }
-        .vpn-copy:hover { background: #fff; color: #000; }
-        .nb-skel { display: block; width: 50px; height: 10px; border-radius: 4px; background: currentColor; opacity: .18; animation: pulse 1.5s infinite; }
-        @keyframes pulse { 0%, 100% { opacity: .18; } 50% { opacity: .06; } }
-        .ui-select { background: rgba(255,255,255,0.06); border: 1px solid var(--card-border); border-radius: 10px; padding: 8px 12px; color: white; width: 100%; font-size: 13px; outline: none; }
-        .ui-select:focus { border-color: rgba(255,255,255,0.25); }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Loket VPN</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0a0c;--card:#141418;--line:#24242c;--fg:#f2f2f5;--muted:#8b8b96;
+  --accent:#fff;--ok:#34d399;--warn:#fbbf24;--bad:#f87171;
+}
+html,body{background:var(--bg);color:var(--fg);min-height:100%}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;padding:18px 14px 40px;line-height:1.4;
+}
+.wrap{max-width:720px;margin:0 auto}
+
+/* header */
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
+.brand{display:flex;align-items:baseline;gap:8px;font-size:20px;font-weight:800;letter-spacing:-.02em}
+.brand b{background:var(--accent);color:#000;padding:2px 8px;border-radius:6px;font-size:16px}
+.sub{font-size:11px;color:var(--muted);margin-top:4px;letter-spacing:.04em;text-transform:uppercase}
+.admin{
+  font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--fg);text-decoration:none;border:1px solid var(--line);border-radius:9px;
+  padding:8px 12px;white-space:nowrap;transition:.15s;
+}
+.admin:active{background:var(--card)}
+
+/* filters */
+.filters{
+  background:var(--card);border:1px solid var(--line);border-radius:14px;
+  padding:14px;margin-bottom:14px;
+}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid .full{grid-column:1/-1}
+@media(min-width:640px){.grid{grid-template-columns:repeat(5,1fr)}.grid .full{grid-column:auto}}
+.field label{
+  display:block;font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);margin-bottom:5px;
+}
+.field select,.field input{
+  width:100%;height:38px;background:#0e0e12;color:var(--fg);
+  border:1px solid var(--line);border-radius:9px;padding:0 10px;font-size:13px;
+  font-family:inherit;outline:none;appearance:none;
+}
+.field select{background-image:url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238b8b96'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;padding-right:26px}
+.field select:focus,.field input:focus{border-color:#3a3a46}
+
+/* list */
+.list{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.row{display:flex;align-items:stretch;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:none}
+.row:active{background:#1a1a20}
+.info{display:flex;align-items:center;gap:12px;flex:1;min-width:0;padding:11px 13px}
+.flag{font-size:21px;line-height:1;flex:0 0 auto}
+.meta{flex:1;min-width:0}
+.ip{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nm{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st{font-size:10px;font-weight:700;margin-top:3px;font-family:ui-monospace,monospace}
+.st.ok{color:var(--ok)}.st.warn{color:var(--warn)}.st.bad{color:var(--bad)}.st.load{color:var(--muted)}
+.skel{display:inline-block;width:52px;height:9px;border-radius:4px;background:var(--muted);opacity:.25}
+
+.copy{
+  flex:0 0 62px;display:flex;align-items:center;justify-content:center;
+  border:none;border-left:1px solid var(--line);background:transparent;
+  color:var(--fg);font-size:10px;font-weight:800;letter-spacing:.08em;
+  cursor:pointer;font-family:inherit;transition:.15s;
+}
+.copy:active,.copy.done{background:#fff;color:#000}
+.empty{padding:34px 16px;text-align:center;color:var(--muted);font-size:13px}
+
+/* pager */
+.pager{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:14px}
+.pager button{
+  background:var(--card);border:1px solid var(--line);color:var(--fg);
+  border-radius:9px;padding:9px 16px;font-size:10px;font-weight:800;
+  letter-spacing:.08em;cursor:pointer;font-family:inherit;
+}
+.pager button:disabled{opacity:.3}
+.pager span{font-size:11px;color:var(--muted);font-family:ui-monospace,monospace}
+
+/* toast */
+#toast{
+  position:fixed;left:50%;bottom:26px;transform:translate(-50%,80px);
+  background:#fff;color:#000;font-size:12px;font-weight:700;
+  padding:10px 18px;border-radius:10px;opacity:0;transition:.22s;
+  pointer-events:none;max-width:88vw;text-align:center;
+}
+#toast.show{transform:translate(-50%,0);opacity:1}
+</style>
 </head>
-<body class="p-4 md:p-8">
-    <main class="max-w-4xl mx-auto">
-        <header class="mb-6 flex items-center justify-between">
-            <div>
-                <h1 class="text-2xl font-black tracking-tight flex items-center gap-2">
-                    <span class="bg-white text-black px-2 py-0.5 rounded text-lg font-mono">LOKET</span>
-                    <span>VPN</span>
-                </h1>
-                <p class="text-xs text-gray-500 font-mono mt-0.5">${nodes.length} Verified Fast Proxies</p>
-            </div>
-            <a href="/admin" class="text-xs font-semibold px-3 py-1.5 rounded-lg border border-white/10 hover:bg-white/10 transition">Admin ⚙️</a>
-        </header>
-
-        <div class="ui-card p-5 mb-6">
-            <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
-                <div>
-                    <label class="text-[10px] uppercase font-bold text-gray-400 mb-1 block">Protocol</label>
-                    <select id="f-proto" onchange="render()" class="ui-select">
-                        <option value="vless">VLESS</option>
-                        <option value="vmess">VMESS</option>
-                        <option value="trojan">TROJAN</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="text-[10px] uppercase font-bold text-gray-400 mb-1 block">Security</label>
-                    <select id="f-sec" onchange="render()" class="ui-select">
-                        <option value="tls">TLS (443)</option>
-                        <option value="none">Non-TLS (80)</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="text-[10px] uppercase font-bold text-gray-400 mb-1 block">Bug / SNI</label>
-                    <select id="f-bug" onchange="render()" class="ui-select">
-                        <option value="">Default Host</option>
-                        <option value="support.zoom.us">Zoom</option>
-                        <option value="ava.game.naver.com">Naver</option>
-                        <option value="quiz.int.vidio.com">Vidio</option>
-                        <option value="graph.instagram.com">Instagram</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="text-[10px] uppercase font-bold text-gray-400 mb-1 block">Location</label>
-                    <select id="f-cc" onchange="render()" class="ui-select">
-                        <option value="ALL">All Countries</option>
-                    </select>
-                </div>
-                <div class="col-span-2 md:col-span-1">
-                    <label class="text-[10px] uppercase font-bold text-gray-400 mb-1 block">Search</label>
-                    <input type="text" id="f-search" oninput="render()" class="ui-select" placeholder="Filter IP/Name...">
-                </div>
-            </div>
-        </div>
-
-        <div id="node-list" class="ui-card divide-y divide-white/5"></div>
-        <div id="pagination" class="mt-4 flex justify-between items-center text-xs font-semibold text-gray-400 px-2"></div>
-    </main>
-
-    <div id="toast" class="fixed bottom-6 right-6 bg-white text-black px-4 py-2 rounded-xl text-xs font-bold shadow-2xl transition transform translate-y-20 opacity-0 duration-200 pointer-events-none">
-        Copied to clipboard!
+<body>
+<div class="wrap">
+  <div class="top">
+    <div>
+      <div class="brand"><b>LOKET</b><span>VPN</span></div>
+      <div class="sub" id="count">${nodes.length} nodes</div>
     </div>
+    <a class="admin" href="/admin">Admin</a>
+  </div>
 
-    <script>
-        const nodes = ${JSON.stringify(nodes)};
-        let page = 0;
+  <div class="filters">
+    <div class="grid">
+      <div class="field">
+        <label for="f-proto">Protocol</label>
+        <select id="f-proto">
+          <option value="vless">VLESS</option>
+          <option value="vmess">VMESS</option>
+          <option value="trojan">TROJAN</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="f-sec">Security</label>
+        <select id="f-sec">
+          <option value="tls">TLS 443</option>
+          <option value="none">Non-TLS 80</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="f-bug">Bug SNI</label>
+        <select id="f-bug">
+          <option value="">Default</option>
+          <option value="support.zoom.us">Zoom</option>
+          <option value="ava.game.naver.com">Naver</option>
+          <option value="quiz.int.vidio.com">Vidio</option>
+          <option value="graph.instagram.com">Instagram</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="f-cc">Location</label>
+        <select id="f-cc"><option value="ALL">All</option></select>
+      </div>
+      <div class="field full">
+        <label for="f-q">Search</label>
+        <input id="f-q" type="text" placeholder="IP or provider" autocomplete="off">
+      </div>
+    </div>
+  </div>
 
-        function parseEndpoint(proxyStr) {
-            try {
-                const raw = proxyStr || '';
-                const hasScheme = raw.startsWith('http://') || raw.startsWith('https://') || raw.startsWith('socks5://');
-                const u = new URL(hasScheme ? raw : 'http://' + raw);
-                return { ip: u.hostname, port: u.port || '80' };
-            } catch {
-                return { ip: '127.0.0.1', port: '80' };
-            }
-        }
+  <div class="list" id="list"></div>
+  <div class="pager">
+    <button id="prev" type="button">PREV</button>
+    <span id="pinfo"></span>
+    <button id="next" type="button">NEXT</button>
+  </div>
+</div>
 
-        function getFlag(cc) {
-            return (cc || 'XX').replace(/./g, c => String.fromCodePoint(127397 + c.charCodeAt(0)));
-        }
+<div id="toast"></div>
 
-        function render() {
-            const proto = document.getElementById('f-proto').value;
-            const sec = document.getElementById('f-sec').value;
-            const bug = document.getElementById('f-bug').value;
-            const cc = document.getElementById('f-cc').value;
-            const search = document.getElementById('f-search').value.toLowerCase();
+<script>
+(function(){
+  var NODES = ${payload};
+  var PAGE_SIZE = 20;
+  var page = 0;
+  var filtered = NODES;
 
-            const filtered = nodes.filter(n => {
-                const matchCc = (cc === 'ALL' || (n.cc || n.flag) === cc);
-                const proxyStr = n.proxy || '';
-                const matchSearch = (n.name || '').toLowerCase().includes(search) || proxyStr.includes(search);
-                return matchCc && matchSearch;
-            });
+  var $ = function(id){ return document.getElementById(id); };
+  var listEl = $('list'), pinfo = $('pinfo'), prev = $('prev'), next = $('next');
 
-            const totalPages = Math.ceil(filtered.length / 20) || 1;
-            if (page >= totalPages) page = 0;
-            const slice = filtered.slice(page * 20, (page + 1) * 20);
+  function flagOf(cc){
+    if(!cc || cc.length !== 2) return '🌐';
+    return cc.replace(/./g, function(c){
+      return String.fromCodePoint(127397 + c.charCodeAt(0));
+    });
+  }
 
-            const container = document.getElementById('node-list');
-            if (slice.length === 0) {
-                container.innerHTML = '<div class="p-8 text-center text-gray-500 text-sm">No proxy nodes found matching filter.</div>';
-            } else {
-                container.innerHTML = slice.map((n, i) => {
-                    const ep = parseEndpoint(n.proxy);
-                    const idx = page * 20 + i;
-                    return \`
-                        <div class="vpn-row">
-                            <div class="vpn-info">
-                                <span class="text-2xl">\${getFlag(n.flag || n.cc)}</span>
-                                <div class="flex-1 min-w-0">
-                                    <div class="text-[13px] font-mono font-semibold truncate text-white">\${ep.ip}</div>
-                                    <div class="text-[10px] text-gray-400 uppercase tracking-wider truncate">\${n.name || n.id}</div>
-                                    <div id="status-\${idx}" class="text-[10px] font-bold mt-0.5" data-ip="\${ep.ip}" data-port="\${ep.port}">
-                                        <span class="nb-skel"></span>
-                                    </div>
-                                </div>
-                            </div>
-                            <button onclick="copyConfig('\${n.id}', '\${n.name || n.id}')" title="Copy Configuration" class="vpn-copy">
-                                <i class="fas fa-copy"></i>
-                            </button>
-                        </div>\`;
-                }).join('');
-            }
+  function endpoint(proxyStr){
+    try{
+      var raw = proxyStr || '';
+      if(!/^[a-z]+:\\/\\//i.test(raw)) raw = 'http://' + raw;
+      var u = new URL(raw);
+      return { ip: u.hostname || '—', port: u.port || '80' };
+    }catch(e){
+      return { ip: '—', port: '80' };
+    }
+  }
 
-            document.getElementById('pagination').innerHTML = \`
-                <button onclick="chg(-1)" class="px-3 py-1.5 rounded bg-white/5 hover:bg-white/10 transition \${page === 0 ? 'opacity-30 cursor-not-allowed' : ''}">PREV</button>
-                <span>Page \${page + 1} of \${totalPages} (\${filtered.length} nodes)</span>
-                <button onclick="chg(1)" class="px-3 py-1.5 rounded bg-white/5 hover:bg-white/10 transition \${page >= totalPages - 1 ? 'opacity-30 cursor-not-allowed' : ''}">NEXT</button>
-            \`;
-            
-            slice.forEach((n, i) => {
-                const ep = parseEndpoint(n.proxy);
-                const idx = page * 20 + i;
-                setTimeout(() => checkStatus(idx, ep.ip, ep.port), i * 80);
-            });
-        }
+  function render(){
+    var cc = $('f-cc').value;
+    var q = $('f-q').value.trim().toLowerCase();
 
-        function chg(d) {
-            page = Math.max(0, page + d);
-            render();
-        }
+    filtered = NODES.filter(function(n){
+      if(cc !== 'ALL' && n.flag !== cc) return false;
+      if(q && n.name.toLowerCase().indexOf(q) < 0 && n.proxy.toLowerCase().indexOf(q) < 0) return false;
+      return true;
+    });
 
-        async function checkStatus(id, ip, port) {
-            const el = document.getElementById('status-' + id);
-            if (!el) return;
-            try {
-                const r = await fetch('/api/check-proxy?ip=' + ip + '&port=' + port).then(j => j.json());
-                if (r.status === 'Active') {
-                    const color = r.ping_ms < 300 ? 'text-emerald-400' : 'text-amber-400';
-                    el.innerHTML = \`<span class="\${color}">● \${r.ping_ms} ms</span>\`;
-                } else {
-                    el.innerHTML = '<span class="text-red-400">● OFFLINE</span>';
-                }
-            } catch(e) {
-                el.innerHTML = '<span class="text-gray-500">● TIMEOUT</span>';
-            }
-        }
+    var pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    if(page >= pages) page = pages - 1;
+    var slice = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
-        async function copyConfig(nodeId, name) {
-            const proto = document.getElementById('f-proto').value;
-            const sec = document.getElementById('f-sec').value;
-            const bug = document.getElementById('f-bug').value;
-            try {
-                const res = await fetch('/api/config?node=' + nodeId + '&sec=' + sec + '&bug=' + encodeURIComponent(bug)).then(j => j.json());
-                const cfg = (res.argo && res.argo[proto]) || (res.native && res.native[proto]) || '';
-                if (!cfg) throw new Error('No config generated');
-                await navigator.clipboard.writeText(cfg);
-                showToast('Copied: ' + name);
-            } catch (err) {
-                alert('Failed to generate config: ' + err.message);
-            }
-        }
+    $('count').textContent = filtered.length + ' nodes';
 
-        function showToast(msg) {
-            const t = document.getElementById('toast');
-            t.textContent = msg;
-            t.classList.remove('translate-y-20', 'opacity-0');
-            setTimeout(() => t.classList.add('translate-y-20', 'opacity-0'), 2000);
-        }
+    if(!slice.length){
+      listEl.innerHTML = '<div class="empty">No nodes match this filter.</div>';
+    }else{
+      var html = '';
+      for(var i = 0; i < slice.length; i++){
+        var n = slice[i];
+        var ep = endpoint(n.proxy);
+        var idx = page * PAGE_SIZE + i;
+        html += '<div class="row">'
+          + '<div class="info">'
+          + '<span class="flag">' + flagOf(n.flag) + '</span>'
+          + '<div class="meta">'
+          + '<div class="ip">' + ep.ip + '</div>'
+          + '<div class="nm">' + n.name + '</div>'
+          + '<div class="st load" id="st' + idx + '"><span class="skel"></span></div>'
+          + '</div></div>'
+          + '<button class="copy" type="button" data-node="' + n.id + '" data-name="' + n.name + '">COPY</button>'
+          + '</div>';
+      }
+      listEl.innerHTML = html;
+    }
 
-        // Populate countries dropdown
-        const ccOpt = document.getElementById('f-cc');
-        const ccs = [...new Set(nodes.map(n => n.cc || n.flag).filter(Boolean))].sort();
-        ccs.forEach(c => {
-            const opt = document.createElement('option');
-            opt.value = c;
-            opt.textContent = getFlag(c) + ' ' + c;
-            ccOpt.appendChild(opt);
-        });
+    pinfo.textContent = page + 1 + ' / ' + pages;
+    prev.disabled = page <= 0;
+    next.disabled = page >= pages - 1;
 
-        render();
-    </script>
+    for(var j = 0; j < slice.length; j++){
+      (function(k){
+        var ep = endpoint(slice[k].proxy);
+        setTimeout(function(){
+          check(page * PAGE_SIZE + k, ep.ip, ep.port);
+        }, k * 90);
+      })(j);
+    }
+  }
+
+  function check(idx, ip, port){
+    var el = $('st' + idx);
+    if(!el || !ip || ip === '—') return;
+    var url = '/api/check-proxy?ip=' + encodeURIComponent(ip) + '&port=' + encodeURIComponent(port);
+    fetch(url).then(function(r){ return r.json(); }).then(function(d){
+      if(d.status === 'Active'){
+        var cls = d.ping_ms < 300 ? 'ok' : 'warn';
+        el.className = 'st ' + cls;
+        el.textContent = '● ' + d.ping_ms + ' ms';
+      }else{
+        el.className = 'st bad';
+        el.textContent = '● OFFLINE';
+      }
+    }).catch(function(){
+      el.className = 'st bad';
+      el.textContent = '● ERROR';
+    });
+  }
+
+  var toast = $('toast');
+  var toastTimer = null;
+  function showToast(msg){
+    toast.textContent = msg;
+    toast.className = 'show';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function(){ toast.className = ''; }, 1800);
+  }
+
+  listEl.addEventListener('click', function(e){
+    var btn = e.target.closest('.copy');
+    if(!btn) return;
+    var proto = $('f-proto').value;
+    var sec = $('f-sec').value;
+    var bug = $('f-bug').value;
+    var qs = '/api/config?node=' + encodeURIComponent(btn.getAttribute('data-node'))
+      + '&sec=' + encodeURIComponent(sec)
+      + '&bug=' + encodeURIComponent(bug);
+    fetch(qs).then(function(r){ return r.json(); }).then(function(d){
+      var cfg = '';
+      if(sec === 'tls' && d.native && d.native[proto]) cfg = d.native[proto];
+      else if(d.argo && d.argo[proto]) cfg = d.argo[proto];
+      if(!cfg) throw new Error('no config');
+      return navigator.clipboard.writeText(cfg).then(function(){
+        btn.textContent = 'OK';
+        btn.className = 'copy done';
+        setTimeout(function(){ btn.textContent = 'COPY'; btn.className = 'copy'; }, 1400);
+        showToast('Copied ' + btn.getAttribute('data-name'));
+      });
+    }).catch(function(){
+      showToast('Failed to copy');
+    });
+  });
+
+  $('f-cc').innerHTML = '<option value="ALL">All</option>'
+    + Array.from(new Set(NODES.map(function(n){ return n.flag; }))).sort()
+        .map(function(c){ return '<option value="' + c + '">' + flagOf(c) + ' ' + c + '</option>'; })
+        .join('');
+
+  ['f-proto','f-sec','f-bug','f-cc'].forEach(function(id){
+    $(id).addEventListener('change', function(){
+      page = 0;
+      if(id !== 'f-proto' && id !== 'f-sec' && id !== 'f-bug') render();
+      else render();
+    });
+  });
+  $('f-q').addEventListener('input', function(){ page = 0; render(); });
+  prev.addEventListener('click', function(){ if(page > 0){ page--; render(); } });
+  next.addEventListener('click', function(){ page++; render(); });
+
+  render();
+})();
+</script>
 </body>
 </html>`;
 }
+
 
 function adminPage({ host = '' } = {}) {
   return `<!DOCTYPE html>
