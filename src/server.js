@@ -295,7 +295,7 @@ const server = http.createServer(async (req, res) => {
       sshHost: CONFIG.sshPublicHost || CONFIG.publicHost,
       sshPort: CONFIG.sshPublicPort || '22',
       limits: { perIp: CONFIG.signupPerIp },
-      nodes: nodes.map((n) => ({ id: n.id, name: n.name, flag: n.flag })),
+      nodes: nodes.map((n) => ({ id: n.id, name: n.name, flag: n.flag, cc: n.cc || n.flag, proxy: n.proxy || '' })),
     }));
   }
 
