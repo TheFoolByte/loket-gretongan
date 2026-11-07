@@ -28,6 +28,7 @@ const { publicPage, dashboardPage, adminPage, qrSvg } = require('./ui');
 const { loadNodes, probeNode } = require('./nodes');
 const { openEgress } = require('./upstream');
 const { parseRawProxies, scanAndFilter } = require('./scanner');
+const { pullFreshProxies } = require('./pull');
 
 const CONFIG = {
   port: Number(process.env.WEB_PORT || process.env.PORT || 8080),
@@ -79,6 +80,34 @@ let nodeById = new Map(nodes.map((n) => [n.id, n]));
 function reloadNodes() {
   nodes = loadNodes();
   nodeById = new Map(nodes.map((n) => [n.id, n]));
+}
+
+/**
+ * Pull fresh proxies, merge into the current node list (dedupe by proxy URL),
+ * cap at MAX_NODES, persist and hot-reload.
+ */
+async function performPull({ limit, concurrency, maxLatencyMs } = {}) {
+  const result = await pullFreshProxies({ limit, concurrency, maxLatencyMs });
+
+  const existing = nodes.map((n) => ({ ...n }));
+  const seen = new Set(existing.map((n) => n.proxy));
+  const merged = [...existing];
+  let added = 0;
+  for (const n of result.nodes) {
+    if (seen.has(n.proxy)) continue;
+    seen.add(n.proxy);
+    merged.push(n);
+    added += 1;
+  }
+
+  const cap = Math.max(1, Number(process.env.MAX_NODES || 500));
+  const final = merged.slice(0, cap);
+
+  fs.mkdirSync(path.dirname(nodesFilePath), { recursive: true });
+  fs.writeFileSync(nodesFilePath, JSON.stringify(final, null, 2) + '\n', { mode: 0o600 });
+  reloadNodes();
+
+  return { fetched: result.total, live: result.live, added, total: final.length, bySource: result.bySource };
 }
 
 const stats = { startedAt: Date.now(), rx: 0, tx: 0, sshRx: 0, sshTx: 0, activeSsh: 0, perIp: new Map() };
@@ -442,6 +471,18 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (pathname === '/api/admin/pull' && req.method === 'POST') {
+    try {
+      const body = JSON.parse((await readBody(req, 64 * 1024)) || '{}');
+      const limit = Math.min(Math.max(Number(body.limit) || 400, 50), 2000);
+      const concurrency = Math.min(Math.max(Number(body.concurrency) || 24, 1), 50);
+      const summary = await performPull({ limit, concurrency, maxLatencyMs: Number(body.maxLatencyMs) || 5000 });
+      return json(res, 200, { ok: true, ...summary });
+    } catch (err) {
+      return json(res, 500, { error: err.message });
+    }
+  }
+
   if (pathname === '/api/admin/block' && req.method === 'POST') {
     try {
       const body = JSON.parse((await readBody(req)) || '{}');
@@ -551,6 +592,21 @@ const sweeper = setInterval(() => {
   usage.flush();
   sessions.sweep();
 }, 60 * 60 * 1000);
+
+// Optional auto-refresh of the public proxy pool (set AUTO_PULL_MINUTES > 0).
+const autoPullMinutes = Math.max(0, Number(process.env.AUTO_PULL_MINUTES || 0));
+if (autoPullMinutes > 0) {
+  const run = async () => {
+    try {
+      const s = await performPull({ limit: Number(process.env.AUTO_PULL_LIMIT || 300), concurrency: 24 });
+      console.log(`[loket] auto-pull: fetched ${s.fetched}, live ${s.live}, added ${s.added}, total ${s.total}`);
+    } catch (err) {
+      console.error('[loket] auto-pull failed:', err.message);
+    }
+  };
+  setInterval(run, autoPullMinutes * 60_000).unref?.();
+  console.log(`[loket] auto-pull every ${autoPullMinutes} min`);
+}
 
 function shutdown(signal) {
   console.log(`[loket] ${signal} received, shutting down`);

@@ -12,6 +12,7 @@
     "test": "node test/smoke.js && node test/upstream.js && node test/vless.js && node test/import-nodes.js"
   },
   "dependencies": {
+    "maxmind": "^5.0.8",
     "qrcode": "^1.5.4",
     "ws": "8.18.0"
   },

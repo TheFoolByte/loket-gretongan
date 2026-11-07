@@ -276,6 +276,12 @@ button.act:hover{background:#2563eb}
   <button class="act" onclick="startScan()">⚡ Start Scan & Hot-Reload</button>
   <div id="scan-status" class="status"></div>
 </div>
+<div class="card">
+  <h2>🌐 Pull Fresh Proxies</h2>
+  <p style="font-size:13px;color:#94a3b8;margin-bottom:12px">Tarik proxy publik fresh dari hideip.me + sunny9577, probe otomatis, enrich ASN/geo offline, lalu merge ke node list.</p>
+  <button class="act" id="pull-btn" onclick="pullFresh()">🌐 Pull &amp; Merge</button>
+  <div id="pull-status" class="status"></div>
+</div>
 <script>
 document.getElementById('file-input').addEventListener('change', function(e) {
   const file = e.target.files[0];
@@ -295,6 +301,19 @@ async function startScan() {
     if (d.error) { status.textContent = 'Gagal: ' + d.error; return; }
     status.textContent = 'Selesai! Live nodes: ' + d.live + ' / ' + d.total + '. Volume updated!';
   } catch (e) { status.textContent = 'Error: ' + e.message; }
+}
+async function pullFresh() {
+  const btn = document.getElementById('pull-btn');
+  const status = document.getElementById('pull-status');
+  btn.disabled = true;
+  status.textContent = 'Fetching + probing proxies (bisa 1-3 menit)...';
+  try {
+    const res = await fetch('/api/admin/pull', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: 400, concurrency: 24 }) });
+    const d = await res.json();
+    if (d.error) { status.textContent = 'Gagal: ' + d.error; return; }
+    status.textContent = 'Selesai! Fetched ' + d.fetched + ', live ' + d.live + ', added ' + d.added + ', total node ' + d.total + '.';
+  } catch (e) { status.textContent = 'Error: ' + e.message; }
+  finally { btn.disabled = false; }
 }
 </script>`;
 
