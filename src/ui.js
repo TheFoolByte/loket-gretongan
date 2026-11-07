@@ -10,14 +10,45 @@ function esc(s = '') {
 }
 
 /**
- * Renders the EXACT ARGO-NODE user dashboard with full glassmorphism,
- * 3D tilt lerp, region selector, provider listing, TLS toggle, and Bug SNI/CDN.
+ * publicPage: Direct 100% extraction from argo-node HTML/CSS template
+ * Extended with Country & Provider 2-level Cascading Selector.
  */
-function publicPage({ host = '', sshHost = '', sshPort = '22', nodes = [] } = {}) {
-  // Group nodes by country code
+function publicPage({ host = '', nodes = [] } = {}) {
+  // Mapping Country Code -> Full Country Name & Flag
+  const countryNames = {
+    AU: 'Australia 🇦🇺',
+    BR: 'Brazil 🇧🇷',
+    CA: 'Canada 🇨🇦',
+    CH: 'Switzerland 🇨🇭',
+    CM: 'Cameroon 🇨🇲',
+    CN: 'China 🇨🇳',
+    CY: 'Cyprus 🇨🇾',
+    DE: 'Germany 🇩🇪',
+    EE: 'Estonia 🇪🇪',
+    ES: 'Spain 🇪🇸',
+    FR: 'France 🇫🇷',
+    GB: 'United Kingdom 🇬🇧',
+    HK: 'Hong Kong 🇭🇰',
+    IN: 'India 🇮🇳',
+    IT: 'Italy 🇮🇹',
+    JP: 'Japan 🇯🇵',
+    NL: 'Netherlands 🇳🇱',
+    PT: 'Portugal 🇵🇹',
+    RO: 'Romania 🇷🇴',
+    RU: 'Russia 🇷🇺',
+    SA: 'Saudi Arabia 🇸🇦',
+    SE: 'Sweden 🇸🇪',
+    SG: 'Singapore 🇸🇬',
+    TH: 'Thailand 🇹🇭',
+    US: 'United States 🇺🇸',
+    UZ: 'Uzbekistan 🇺🇿',
+    VN: 'Vietnam 🇻🇳'
+  };
+
+  // Group nodes by CC
   const regionMap = {};
   for (const n of nodes) {
-    const cc = (n.flag || 'XX').toUpperCase();
+    const cc = (n.flag || 'US').toUpperCase();
     if (!regionMap[cc]) regionMap[cc] = [];
     regionMap[cc].push(n);
   }
@@ -27,7 +58,7 @@ function publicPage({ host = '', sshHost = '', sshPort = '22', nodes = [] } = {}
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ARGO TUNNEL — LOKET</title>
+  <title>ARGO TUNNEL</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     html{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;scroll-behavior:smooth}
@@ -61,7 +92,7 @@ function publicPage({ host = '', sshHost = '', sshPort = '22', nodes = [] } = {}
       position:fixed;
       inset:0;
       z-index:-1;
-      background:rgba(0,0,0,0.18);
+      background:rgba(0,0,0,0.08);
       backdrop-filter:brightness(0.95);
       -webkit-backdrop-filter:brightness(0.95);
       pointer-events:none;
@@ -75,7 +106,7 @@ function publicPage({ host = '', sshHost = '', sshPort = '22', nodes = [] } = {}
     @keyframes floatB{ 0%,100%{ transform:translate3d(0,0,0) scale(1)} 50%{ transform:translate3d(-10px,-12px,0) scale(1.02)}}
     .shell{
       width:100%;
-      max-width:540px;
+      max-width:520px;
       position:relative;
       z-index:1;
       transform-style:preserve-3d;
@@ -100,6 +131,8 @@ function publicPage({ host = '', sshHost = '', sshPort = '22', nodes = [] } = {}
       justify-content:center;
       border-bottom:1px solid rgba(255,255,255,0.06);
       background:rgba(8,10,14,0.26);
+      backdrop-filter:none;
+      -webkit-backdrop-filter:none;
     }
     .brand{
       font-size:13px;
@@ -119,16 +152,7 @@ function publicPage({ host = '', sshHost = '', sshPort = '22', nodes = [] } = {}
       margin-bottom:12px;
       text-shadow:0 1px 10px rgba(0,0,0,0.65);
     }
-    .group{
-      margin-bottom:16px;
-      background:rgba(8,10,14,0.26);
-      border:1px solid rgba(255,255,255,0.09);
-      border-radius:14px;
-      padding:14px;
-      box-shadow:inset 0 1px 0 rgba(255,255,255,0.04);
-      transition:transform 0.35s cubic-bezier(0.23,1,0.32,1), border-color 0.3s ease, background 0.3s ease;
-      transform:translateZ(0);
-    }
+    .group{ margin-bottom:16px; background:rgba(8,10,14,0.26); backdrop-filter:none; -webkit-backdrop-filter:none; border:1px solid rgba(255,255,255,0.09); border-radius:14px; padding:14px; box-shadow:inset 0 1px 0 rgba(255,255,255,0.04); transition:transform 0.35s cubic-bezier(0.23,1,0.32,1), border-color 0.3s ease, background 0.3s ease; transform:translateZ(0);}
     .group:hover{ border-color:rgba(255,214,10,0.12); background:rgba(8,10,14,0.32); }
     .group.reveal{ opacity:0; transform:translateY(18px) translateZ(0); transition:opacity 0.9s cubic-bezier(0.22,1,0.36,1), transform 0.9s cubic-bezier(0.22,1,0.36,1), border-color 0.3s ease, background 0.3s ease; }
     .group.reveal.in{ opacity:1; transform:translateY(0) translateZ(0); }
@@ -145,26 +169,30 @@ function publicPage({ host = '', sshHost = '', sshPort = '22', nodes = [] } = {}
       background:linear-gradient(90deg, rgba(125,211,224,0.95) 0%, rgba(14,47,90,0.25) 100%);
       box-shadow:0 0 8px rgba(125,211,224,0.45);
     }
-    .select-field{
-      width:100%;
-      background:rgba(8,10,14,0.4);
-      border:1px solid rgba(255,255,255,0.12);
-      border-radius:11px;
-      color:#FFF;
-      padding:12px 14px;
-      font-size:13px;
-      outline:none;
-      transition:border-color 0.2s;
-    }
-    .select-field:focus{ border-color:rgba(125,211,224,0.5); }
-    .select-field optgroup{ background:#12141a; color:#AAA; }
-    .select-field option{ background:#1c1f26; color:#FFF; }
-    
     .grid-2{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
     .grid-3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
+    
+    .select-style{
+      width:100%;
+      height:44px;
+      background:rgba(8,10,14,0.35);
+      border:1px solid rgba(255,255,255,0.12);
+      border-radius:11px;
+      color:#E8E8E8;
+      padding:0 14px;
+      font-size:13px;
+      outline:none;
+      transition:border-color 0.2s ease, background 0.2s ease;
+      cursor:pointer;
+    }
+    .select-style:focus{ border-color:rgba(125,211,224,0.45); }
+    .select-style option{ background:#101319; color:#FFF; }
+
     button.proto{
       height:44px;
       background:rgba(8,10,14,0.22);
+      backdrop-filter:none;
+      -webkit-backdrop-filter:none;
       border:1px solid rgba(255,255,255,0.09);
       border-radius:11px;
       color:#E8E8E8;
@@ -191,7 +219,7 @@ function publicPage({ host = '', sshHost = '', sshPort = '22', nodes = [] } = {}
     button.proto:active{ transform:translateY(0) scale(0.99); }
     button.proto.active{ background:#FFFFFF; border-color:#FFFFFF; color:#0A0A0A; font-weight:650; box-shadow:0 6px 20px rgba(0,0,0,0.30), inset 0 1px 0 rgba(255,255,255,0.9); }
     button.proto.active:hover{ background:#F2F2F2; border-color:#F2F2F2; }
-
+    
     .output{
       margin-top:20px;
       padding-top:20px;
@@ -209,6 +237,8 @@ function publicPage({ host = '', sshHost = '', sshPort = '22', nodes = [] } = {}
     input#config-output{
       width:100%;
       background:rgba(8,10,14,0.26);
+      backdrop-filter:none;
+      -webkit-backdrop-filter:none;
       border:1px solid rgba(255,255,255,0.09);
       color:#E8E8E8;
       padding:13px 14px;
@@ -220,11 +250,13 @@ function publicPage({ host = '', sshHost = '', sshPort = '22', nodes = [] } = {}
       transition:border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
       box-shadow:inset 0 1px 0 rgba(255,255,255,0.03);
     }
+    input#config-output::placeholder{ color:#6A6A6A; }
     input#config-output:focus{ border-color:rgba(125,211,224,0.32); background:rgba(8,10,14,0.32); box-shadow:0 0 0 3px rgba(125,211,224,0.10); }
     .btn-copy{
       height:42px;
-      padding:0 22px;
+      padding:0 18px;
       background:rgba(242,242,242,0.95);
+      backdrop-filter:none;
       color:#080808;
       border:1px solid rgba(255,255,255,0.9);
       border-radius:11px;
@@ -248,11 +280,13 @@ function publicPage({ host = '', sshHost = '', sshPort = '22', nodes = [] } = {}
     }
     .wildcard{ margin-top:18px; padding-top:18px; border-top:1px solid rgba(255,255,255,0.06); }
     .wildcard-list{ display:flex; flex-wrap:wrap; gap:7px; margin-top:10px; }
-    .chip{ display:inline-flex; align-items:center; padding:8px 13px; background:rgba(8,10,14,0.26); border:1px solid rgba(255,255,255,0.09); border-radius:999px; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size:13px; font-weight:500; color:#F0F0F0; cursor:pointer; transition:all 0.2s ease; }
-    .chip:hover{ border-color:rgba(125,211,224,0.28); color:#FFFFFF; background:rgba(255,255,255,0.06); transform:translateY(-1px); }
-    .chip.active{ background:rgba(125,211,224,0.2); border-color:rgba(125,211,224,0.6); color:#FFF; }
-
-    .footer{ margin-top:20px; text-align:center; }
+    .chip{ display:inline-flex; align-items:center; padding:8px 13px; background:rgba(8,10,14,0.26); backdrop-filter:none; -webkit-backdrop-filter:none; border:1px solid rgba(255,255,255,0.09); border-radius:999px; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size:13px; font-weight:500; color:#F0F0F0; letter-spacing:0.01em; box-shadow:inset 0 1px 0 rgba(255,255,255,0.04); transition:all 0.2s ease; cursor:pointer; }
+    .chip:hover{ border-color:rgba(125,211,224,0.28); color:#FFFFFF; background:rgba(255,255,255,0.06); box-shadow:0 2px 12px rgba(30,90,138,0.18); transform:translateY(-1px); }
+    .chip.active{ background:rgba(125,211,224,0.22); border-color:rgba(125,211,224,0.6); color:#FFF; }
+    .footer{
+      margin-top:16px;
+      text-align:center;
+    }
     .support-link{
       display:inline-flex;
       align-items:center;
@@ -263,14 +297,15 @@ function publicPage({ host = '', sshHost = '', sshPort = '22', nodes = [] } = {}
       font-weight:500;
       letter-spacing:0.04em;
       background:rgba(8,10,14,0.26);
+      backdrop-filter:none;
+      -webkit-backdrop-filter:none;
       border:1px solid rgba(255,255,255,0.09);
       padding:9px 16px;
       border-radius:999px;
       transition:all 0.22s ease;
-      box-shadow:0 4px 16px rgba(0,0,0,0.25);
+      box-shadow:0 4px 16px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.05);
     }
-    .support-link:hover{ color:#FFFFFF; background:rgba(255,255,255,0.07); border-color:rgba(125,211,224,0.28); transform:translateY(-1px); }
-    
+    .support-link:hover{ color:#FFFFFF; background:rgba(255,255,255,0.07); border-color:rgba(125,211,224,0.28); box-shadow:0 6px 20px rgba(0,0,0,0.35), 0 0 14px rgba(125,211,224,0.16); transform:translateY(-1px); }
     @media (max-width:560px){
       body{ padding:28px 16px 24px; }
       .content{ padding:20px 18px 18px; }
@@ -284,35 +319,38 @@ function publicPage({ host = '', sshHost = '', sshPort = '22', nodes = [] } = {}
   <div class="bg-image" aria-hidden="true"></div>
   <div class="bg-overlay" aria-hidden="true"></div>
   <div class="bg-orbs" aria-hidden="true"><div class="orb orb1"></div><div class="orb orb2"></div></div>
-  
   <div class="shell" id="shell">
     <div class="panel">
-      <div class="header"><div class="brand">ARGO TUNNEL — LOKET</div></div>
+      <div class="header"><div class="brand">ARGO TUNNEL</div></div>
       <div class="content">
 
-        <!-- 1. REGION SELECTOR (ARGO MULTI-NODE) -->
+        <!-- 1. CASCADING REGION & PROVIDER SELECTOR -->
         <div class="group reveal">
-          <div class="group-head"><div class="group-line"></div><div class="eyebrow">1. Pilih Region & Provider Node (${nodes.length} Nodes)</div></div>
-          <select id="sel-node" class="select-field" onchange="onNodeChange()">
-            <option value="">⚡ Direct Egress (Railway SG / Asli Server)</option>
-            ${Object.keys(regionMap).sort().map(cc => `
-              <optgroup label="📍 REGION: ${esc(cc)} (${regionMap[cc].length} Provider Nodes)">
-                ${regionMap[cc].map(n => `<option value="${esc(n.id)}">${esc(n.name)}</option>`).join('')}
-              </optgroup>
-            `).join('')}
-          </select>
+          <div class="group-head"><div class="group-line"></div><div class="eyebrow">Region & Provider</div></div>
+          <div class="grid-2">
+            <select id="sel-region" class="select-style" onchange="onRegionChange()">
+              <option value="">⚡ Direct (Default Server)</option>
+              ${Object.keys(regionMap).sort().map(cc => `
+                <option value="${esc(cc)}">${esc(countryNames[cc] || cc)} (${regionMap[cc].length} Nodes)</option>
+              `).join('')}
+            </select>
+
+            <select id="sel-provider" class="select-style" onchange="onProviderChange()">
+              <option value="">Semua Provider / Default</option>
+            </select>
+          </div>
         </div>
 
         <!-- 2. SECURITY MODE (TLS vs Non-TLS) -->
         <div class="group reveal">
-          <div class="group-head"><div class="group-line"></div><div class="eyebrow">2. Security Mode (Port 443 / 80)</div></div>
+          <div class="group-head"><div class="group-line"></div><div class="eyebrow">Security Port</div></div>
           <div class="grid-2">
-            <button class="proto active" id="sec-tls" onclick="setSecurity('tls', this)">TLS (443 / HTTPS)</button>
-            <button class="proto" id="sec-ntls" onclick="setSecurity('none', this)">Non-TLS (80 / HTTP)</button>
+            <button class="proto active" id="sec-tls" onclick="setSecurity('tls',this)">TLS (Port 443)</button>
+            <button class="proto" id="sec-ntls" onclick="setSecurity('none',this)">Non-TLS (Port 80)</button>
           </div>
         </div>
 
-        <!-- 3. PROTOCOL BUG SNI -->
+        <!-- 3. BUG SNI -->
         <div class="group reveal">
           <div class="group-head"><div class="group-line"></div><div class="eyebrow">Bug SNI</div></div>
           <div class="grid-2">
@@ -321,7 +359,7 @@ function publicPage({ host = '', sshHost = '', sshPort = '22', nodes = [] } = {}
           </div>
         </div>
 
-        <!-- 4. PROTOCOL BUG CDN -->
+        <!-- 4. BUG CDN -->
         <div class="group reveal">
           <div class="group-head"><div class="group-line"></div><div class="eyebrow">Bug CDN</div></div>
           <div class="grid-3">
@@ -331,45 +369,66 @@ function publicPage({ host = '', sshHost = '', sshPort = '22', nodes = [] } = {}
           </div>
         </div>
 
-        <!-- 5. OUTPUT & INSTANT COPY -->
-        <div class="output">
-          <div class="field">
-            <input type="text" id="config-output" readonly placeholder="Klik salah satu protokol di atas untuk generate..." />
-          </div>
+        <!-- 5. OUTPUT & INSTANT COPY (Identical to argo-node) -->
+        <div class="output" style="justify-content:center">
+          <input type="text" id="config-output" placeholder="Klik salah satu protokol di atas..." readonly />
           <button class="btn-copy" id="copy-btn" onclick="copyConfig()">Copy</button>
         </div>
         <div class="hint" id="hint" style="text-align:center"></div>
 
-        <!-- 6. WILDCARD / BUG PRESETS -->
+        <!-- 6. BUG WILDCARD (Exact argo-node chip styling) -->
         <div class="wildcard">
-          <div class="eyebrow">Bug Wildcard — CDN Supported (Klik untuk Terapkan)</div>
+          <div class="eyebrow">Bug Wildcard — CDN Supported</div>
           <div class="wildcard-list">
-            <span class="chip" onclick="pickBug('support.zoom.us', this)">support.zoom.us</span>
-            <span class="chip" onclick="pickBug('ava.game.naver.com', this)">ava.game.naver.com</span>
-            <span class="chip" onclick="pickBug('quiz.int.vidio.com', this)">quiz.int.vidio.com</span>
-            <span class="chip" onclick="pickBug('graph.instagram.com', this)">graph.instagram.com</span>
-            <span class="chip" onclick="pickBug('', this)">Default (Host Asli)</span>
+            <span class="chip" onclick="pickBug('support.zoom.us',this)">support.zoom.us</span>
+            <span class="chip" onclick="pickBug('ava.game.naver.com',this)">ava.game.naver.com</span>
+            <span class="chip" onclick="pickBug('quiz.int.vidio.com',this)">quiz.int.vidio.com</span>
+            <span class="chip" onclick="pickBug('graph.instagram.com',this)">graph.instagram.com</span>
+            <span class="chip" onclick="pickBug('',this)">Default (Host)</span>
           </div>
         </div>
 
       </div>
     </div>
 
-    <!-- FOOTER -->
+    <!-- 7. FOOTER LINK TO ADMIN DASHBOARD -->
     <div class="footer">
       <a href="/admin" class="support-link">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75l-2.2-1.45c-.95-.63-.33-.98.21-1.55l.85-.85c.09-.09.17-.17.17-.34l-2.14-1.64c-.23-.18-.39-.28-.39-.56 0-.28.2-.43.5-.57l3.4-1.29c1.02-.42 1.69-.66 1.95-.84.26-.18.33-.42.33-.67a.9.9 0 0 0-.02-.2c-.05-.26-.26-.4-.52-.4-.9-.08-1.94.6-3.06 1.4-.42.3-.8.45-1.14.45-.5 0-1.1-.4-1.6-.9-.7-.7-.9-1.2-.3-1.6.6-.4 1.8-.5 2.9-1 1.1-.5 2.1-1 4.4-.9.4 0 .9.2 1.1.6.2.4.2 1 .1 1.8z" fill="currentColor"/></svg>
         Admin Dashboard & Scanner
       </a>
     </div>
   </div>
 
   <script>
+    const ALL_NODES = ${JSON.stringify(nodes)};
     let activeBtn = null;
     let currentSecurity = 'tls';
     let currentBug = '';
     let currentNetwork = 'argo';
     let currentProtocol = 'vless';
+
+    function onRegionChange() {
+      const cc = document.getElementById('sel-region').value;
+      const provEl = document.getElementById('sel-provider');
+      provEl.innerHTML = '<option value="">Semua Provider / Default</option>';
+      if (!cc) {
+        if (activeBtn) generate(currentNetwork, currentProtocol, activeBtn);
+        return;
+      }
+      const filtered = ALL_NODES.filter(n => (n.flag || '').toUpperCase() === cc);
+      filtered.forEach(n => {
+        const opt = document.createElement('option');
+        opt.value = n.id;
+        opt.textContent = n.name || n.id;
+        provEl.appendChild(opt);
+      });
+      if (activeBtn) generate(currentNetwork, currentProtocol, activeBtn);
+    }
+
+    function onProviderChange() {
+      if (activeBtn) generate(currentNetwork, currentProtocol, activeBtn);
+    }
 
     function setSecurity(sec, el) {
       currentSecurity = sec;
@@ -385,10 +444,6 @@ function publicPage({ host = '', sshHost = '', sshPort = '22', nodes = [] } = {}
       if (activeBtn) generate(currentNetwork, currentProtocol, activeBtn);
     }
 
-    function onNodeChange() {
-      if (activeBtn) generate(currentNetwork, currentProtocol, activeBtn);
-    }
-
     async function generate(network, protocol, el) {
       currentNetwork = network;
       currentProtocol = protocol;
@@ -396,13 +451,21 @@ function publicPage({ host = '', sshHost = '', sshPort = '22', nodes = [] } = {}
       const hint = document.getElementById('hint');
       if (activeBtn) activeBtn.classList.remove('active');
       if (el) { el.classList.add('active'); activeBtn = el; }
-      outputEl.value = 'Generating config…';
-      hint.textContent = 'Menghubungkan ke node target…';
+      outputEl.value = 'Loading…';
+      hint.textContent = 'Fetching configuration…';
       hint.style.display = 'block';
+      document.getElementById('copy-btn').textContent = 'Copy';
 
-      const nodeId = document.getElementById('sel-node').value;
+      const regionCc = document.getElementById('sel-region').value;
+      const specificId = document.getElementById('sel-provider').value;
+      let chosenNodeId = specificId;
+      if (!chosenNodeId && regionCc) {
+        const first = ALL_NODES.find(n => (n.flag || '').toUpperCase() === regionCc);
+        if (first) chosenNodeId = first.id;
+      }
+
       const params = new URLSearchParams({
-        node: nodeId,
+        node: chosenNodeId || '',
         bug: currentBug,
         sec: currentSecurity
       });
@@ -412,14 +475,16 @@ function publicPage({ host = '', sshHost = '', sshPort = '22', nodes = [] } = {}
         const data = await res.json();
         const val = data[network][protocol];
         outputEl.value = val || '';
-        hint.textContent = 'Konfigurasi siap digunakan!';
+        if (val && val.startsWith('Menunggu')) hint.textContent = 'Tunnel not ready yet. Try again in a few seconds.';
+        else hint.textContent = '';
+        hint.style.display = hint.textContent ? 'block' : 'none';
       } catch (e) {
         outputEl.value = '';
-        hint.textContent = 'Gagal generate konfigurasi.';
+        hint.textContent = 'Failed to load configuration.';
       }
     }
 
-    // Smooth eased 3D tilt (ARGO-NODE LERP)
+    // Exact Smooth Eased 3D Tilt from argo-node (LERP interpolation)
     (function(){
       const shell = document.getElementById('shell');
       if(!shell) return;
@@ -440,7 +505,7 @@ function publicPage({ host = '', sshHost = '', sshPort = '22', nodes = [] } = {}
       }, {passive:true});
     })();
 
-    // Staggered reveal animations
+    // Exact Staggered Reveal animations from argo-node
     (function(){
       const io = new IntersectionObserver((entries)=>{
         entries.forEach(en=>{ if(en.isIntersecting) en.target.classList.add('in'); });
@@ -452,17 +517,17 @@ function publicPage({ host = '', sshHost = '', sshPort = '22', nodes = [] } = {}
     function copyConfig(){
       const el = document.getElementById('config-output');
       const hint = document.getElementById('hint');
-      if(!el.value || el.value.includes('…')) return;
+      if(!el.value || el.value === 'Loading…') return;
       navigator.clipboard.writeText(el.value).then(()=>{
         const btn = document.getElementById('copy-btn');
-        btn.textContent = 'Copied!';
+        btn.textContent = 'Copied';
         if(hint){ hint.textContent = 'Copied to clipboard.'; hint.style.display='block'; }
-        setTimeout(()=>{ btn.textContent='Copy'; }, 1800);
+        setTimeout(()=>{ if(btn.textContent==='Copied'){ btn.textContent='Copy'; if(hint){ hint.textContent=''; hint.style.display='none'; } } }, 1800);
       }).catch(()=>{
-        el.select();
-        document.execCommand('copy');
+        if(el.select) el.select();
+        try{ document.execCommand('copy'); }catch(e){}
         const btn = document.getElementById('copy-btn');
-        btn.textContent = 'Copied!';
+        btn.textContent = 'Copied';
         setTimeout(()=> btn.textContent='Copy', 1500);
       });
     }
@@ -473,7 +538,6 @@ function publicPage({ host = '', sshHost = '', sshPort = '22', nodes = [] } = {}
 }
 
 function adminPage({ host = '' } = {}) {
-  // Admin page layout
   return `<!DOCTYPE html>
 <html lang="id">
 <head>
