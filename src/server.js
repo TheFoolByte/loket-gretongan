@@ -215,6 +215,18 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/health') return json(res, 200, { ok: true, uptime: Math.floor((Date.now() - stats.startedAt) / 1000) });
 
+  // ---- public proxy check endpoint ----
+  if (pathname === '/api/check-proxy' && req.method === 'GET') {
+    const pIp = url.searchParams.get('ip');
+    const pPort = url.searchParams.get('port');
+    if (!pIp || !pPort) return json(res, 400, { error: 'Missing params' });
+    const result = await probeNode({ proxy: `${pIp}:${pPort}` });
+    return json(res, 200, { 
+      status: result.ok ? 'Active' : 'Offline', 
+      ping_ms: result.ms 
+    });
+  }
+
   // ---- public config endpoint (argo-node full parity) ----
   if (pathname === '/api/config' && req.method === 'GET') {
     const host = req.headers.host || CONFIG.publicHost || 'localhost';
