@@ -141,7 +141,7 @@ function catalogInner({ nodes = [] } = {}) {
   function endpoint(proxyStr){
     try{
       var raw = proxyStr || '';
-      if(!/^[a-z]+:\/\//i.test(raw)) raw = 'http://' + raw;
+      if(!/^[a-z]+:\\/\\//i.test(raw)) raw = 'http://' + raw;
       var u = new URL(raw);
       return { ip: u.hostname || '—', port: u.port || '80' };
     }catch(e){ return { ip: '—', port: '80' }; }
