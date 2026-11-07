@@ -409,8 +409,8 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/admin/scan' && req.method === 'POST') {
     try {
       const body = JSON.parse((await readBody(req, 2 * 1024 * 1024)) || '{}');
-      const rawText = String(body.text || '');
-      const save = Boolean(body.save);
+      const rawText = String(body.text || body.raw || '');
+      const save = Boolean(body.save === true || body.autoSave === true);
       const concurrency = Math.min(Math.max(Number(body.concurrency) || 8, 1), 20);
 
       const candidates = parseRawProxies(rawText);

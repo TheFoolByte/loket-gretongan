@@ -247,11 +247,14 @@ function dashboardPage() {
     innerHtml: `<style>
 .placeholder{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:48px 20px;text-align:center;margin-top:8px}
 .placeholder h1{font-size:18px;font-weight:800;margin-bottom:8px}
-.placeholder p{font-size:13px;color:var(--muted)}
+.placeholder p{font-size:13px;color:var(--muted);margin-bottom:20px}
+.placeholder .cta{display:inline-block;background:var(--accent);color:#000;font-weight:800;font-size:13px;padding:12px 22px;border-radius:10px;text-decoration:none}
+.placeholder .cta:active{opacity:.8}
 </style>
 <div class="placeholder">
   <h1>Dashboard</h1>
-  <p>Belum ada konten. Akan diisi setelah semua fitur beres.</p>
+  <p>Belum ada konten. Node &amp; generator ada di halaman Create VPN.</p>
+  <a class="cta" href="/vpn">Buka Create VPN →</a>
 </div>`,
   });
 }
@@ -287,8 +290,9 @@ async function startScan() {
   if (!text.trim()) return alert('Paste proxy report dulu!');
   status.textContent = 'Scanning and verifying nodes... mohon tunggu...';
   try {
-    const res = await fetch('/api/admin/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ raw: text, autoSave: true }) });
+    const res = await fetch('/api/admin/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text, save: true }) });
     const d = await res.json();
+    if (d.error) { status.textContent = 'Gagal: ' + d.error; return; }
     status.textContent = 'Selesai! Live nodes: ' + d.live + ' / ' + d.total + '. Volume updated!';
   } catch (e) { status.textContent = 'Error: ' + e.message; }
 }
