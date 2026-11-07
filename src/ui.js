@@ -264,57 +264,101 @@ function adminPage({ host = '' } = {}) {
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;max-width:800px;margin:0 auto 20px}
 h2{margin-bottom:12px;color:var(--fg)}
 textarea{width:100%;height:150px;background:#0d0f14;border:1px solid #333;color:#fff;border-radius:8px;padding:10px;font-family:ui-monospace,monospace}
+input.txt{width:100%;height:40px;background:#0d0f14;border:1px solid #333;color:#fff;border-radius:8px;padding:0 12px;font-family:ui-monospace,monospace}
+.row{display:flex;gap:8px}
 button.act{background:#3b82f6;color:#fff;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-weight:bold;margin-top:10px}
 button.act:hover{background:#2563eb}
+button.act:disabled{opacity:.5;cursor:default}
 .status{margin-top:10px;font-size:13px;color:#94a3b8}
+.msg{margin-top:10px;font-size:13px}
+.msg.err{color:#f87171}
 </style>
-<div class="card">
-  <h2>⚡ Proxy Scanner & Node Importer</h2>
-  <p style="font-size:13px;color:#94a3b8;margin-bottom:12px">Paste proxy raw / ProxyCheck report atau upload file txt untuk update multi-node.</p>
-  <textarea id="proxy-input" placeholder="Paste proxy report di sini..."></textarea>
-  <div><input type="file" id="file-input" accept=".txt" style="margin-top:10px" /></div>
-  <button class="act" onclick="startScan()">⚡ Start Scan & Hot-Reload</button>
-  <div id="scan-status" class="status"></div>
+
+<div class="card" id="login">
+  <h2>Masuk Admin</h2>
+  <div class="row"><input class="txt" id="p" type="password" placeholder="ADMIN_PASS"><button class="act" id="loginBtn" style="margin-top:0">Masuk</button></div>
+  <div class="msg" id="lmsg"></div>
 </div>
-<div class="card">
-  <h2>🌐 Pull Fresh Proxies</h2>
-  <p style="font-size:13px;color:#94a3b8;margin-bottom:12px">Tarik proxy publik fresh dari hideip.me + sunny9577, probe otomatis, enrich ASN/geo offline, lalu merge ke node list.</p>
-  <button class="act" id="pull-btn" onclick="pullFresh()">🌐 Pull &amp; Merge</button>
-  <div id="pull-status" class="status"></div>
+
+<div id="dash" style="display:none">
+  <div class="card">
+    <h2>⚡ Proxy Scanner & Node Importer</h2>
+    <p style="font-size:13px;color:#94a3b8;margin-bottom:12px">Paste proxy raw / ProxyCheck report atau upload file txt untuk update multi-node.</p>
+    <textarea id="proxy-input" placeholder="Paste proxy report di sini..."></textarea>
+    <div><input type="file" id="file-input" accept=".txt" style="margin-top:10px" /></div>
+    <button class="act" onclick="startScan()">⚡ Start Scan & Hot-Reload</button>
+    <div id="scan-status" class="status"></div>
+  </div>
+  <div class="card">
+    <h2>🌐 Pull Fresh Proxies</h2>
+    <p style="font-size:13px;color:#94a3b8;margin-bottom:12px">Tarik proxy publik fresh dari hideip.me + sunny9577, probe otomatis, enrich ASN/geo offline, lalu merge ke node list.</p>
+    <button class="act" id="pull-btn" onclick="pullFresh()">🌐 Pull &amp; Merge</button>
+    <div id="pull-status" class="status"></div>
+  </div>
+  <p style="text-align:center"><button class="act" onclick="logout()" style="background:#ef4444">Keluar</button></p>
 </div>
+
 <script>
-document.getElementById('file-input').addEventListener('change', function(e) {
-  const file = e.target.files[0];
+var csrf = '';
+var $ = function(id){ return document.getElementById(id); };
+
+async function api(path, opts) {
+  opts = opts || {};
+  opts.credentials = 'same-origin';
+  opts.headers = Object.assign({ 'content-type': 'application/json', 'x-csrf-token': csrf }, opts.headers || {});
+  var res = await fetch(path, opts);
+  var data = await res.json().catch(function(){ return {}; });
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+$('loginBtn').addEventListener('click', async function(){
+  try {
+    var r = await api('/api/login', { method: 'POST', body: JSON.stringify({ password: $('p').value }) });
+    csrf = r.csrf;
+    $('login').style.display = 'none';
+    $('dash').style.display = 'block';
+  } catch (e) { $('lmsg').className = 'msg err'; $('lmsg').textContent = e.message; }
+});
+
+async function logout(){
+  try { await api('/api/logout', { method: 'POST' }); } catch (e) {}
+  location.reload();
+}
+
+$('file-input').addEventListener('change', function(e) {
+  var file = e.target.files[0];
   if (!file) return;
-  const reader = new FileReader();
-  reader.onload = function(evt) { document.getElementById('proxy-input').value = evt.target.result; };
+  var reader = new FileReader();
+  reader.onload = function(evt) { $('proxy-input').value = evt.target.result; };
   reader.readAsText(file);
 });
+
 async function startScan() {
-  const text = document.getElementById('proxy-input').value;
-  const status = document.getElementById('scan-status');
+  var text = $('proxy-input').value;
+  var status = $('scan-status');
   if (!text.trim()) return alert('Paste proxy report dulu!');
   status.textContent = 'Scanning and verifying nodes... mohon tunggu...';
   try {
-    const res = await fetch('/api/admin/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text, save: true }) });
-    const d = await res.json();
-    if (d.error) { status.textContent = 'Gagal: ' + d.error; return; }
+    var d = await api('/api/admin/scan', { method: 'POST', body: JSON.stringify({ text: text, save: true }) });
     status.textContent = 'Selesai! Live nodes: ' + d.live + ' / ' + d.total + '. Volume updated!';
   } catch (e) { status.textContent = 'Error: ' + e.message; }
 }
+
 async function pullFresh() {
-  const btn = document.getElementById('pull-btn');
-  const status = document.getElementById('pull-status');
+  var btn = $('pull-btn');
+  var status = $('pull-status');
   btn.disabled = true;
   status.textContent = 'Fetching + probing proxies (bisa 1-3 menit)...';
   try {
-    const res = await fetch('/api/admin/pull', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: 400, concurrency: 24 }) });
-    const d = await res.json();
-    if (d.error) { status.textContent = 'Gagal: ' + d.error; return; }
+    var d = await api('/api/admin/pull', { method: 'POST', body: JSON.stringify({ limit: 400, concurrency: 24 }) });
     status.textContent = 'Selesai! Fetched ' + d.fetched + ', live ' + d.live + ', added ' + d.added + ', total node ' + d.total + '.';
   } catch (e) { status.textContent = 'Error: ' + e.message; }
   finally { btn.disabled = false; }
 }
+
+// auto-login if session still valid
+api('/api/me').then(function(){ $('login').style.display = 'none'; $('dash').style.display = 'block'; }).catch(function(){});
 </script>`;
 
   return pageShell({ active: 'admin', title: 'Dashboard Admin', innerHtml });
