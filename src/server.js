@@ -12,6 +12,8 @@
 
 const http = require('node:http');
 const crypto = require('node:crypto');
+const path = require('node:path');
+const fs = require('node:fs');
 const { WebSocketServer } = require('ws');
 
 const net = require('node:net');
@@ -25,6 +27,7 @@ const { isPrivateIp } = require('./net-guard');
 const { publicPage, adminPage, qrSvg } = require('./ui');
 const { loadNodes, probeNode } = require('./nodes');
 const { openEgress } = require('./upstream');
+const { parseRawProxies, scanAndFilter } = require('./scanner');
 
 const CONFIG = {
   port: Number(process.env.WEB_PORT || process.env.PORT || 8080),
@@ -56,8 +59,14 @@ const signupThrottle = new Throttle({ limit: Number(process.env.SIGNUP_BURST || 
 const users = new Users({ dataDir: process.env.DATA_DIR || '/data' });
 const usage = new Usage({ dataDir: process.env.DATA_DIR || '/data' });
 const adminHash = hashPassword(CONFIG.adminPassword);
-const nodes = loadNodes();
-const nodeById = new Map(nodes.map((n) => [n.id, n]));
+const nodesFilePath = process.env.NODES_FILE || path.join(process.env.DATA_DIR || '/data', 'nodes.json');
+let nodes = loadNodes();
+let nodeById = new Map(nodes.map((n) => [n.id, n]));
+
+function reloadNodes() {
+  nodes = loadNodes();
+  nodeById = new Map(nodes.map((n) => [n.id, n]));
+}
 
 const stats = { startedAt: Date.now(), rx: 0, tx: 0, sshRx: 0, sshTx: 0, activeSsh: 0, perIp: new Map() };
 
@@ -323,7 +332,44 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/admin/nodes') {
     const report = await Promise.all(nodes.map(async (n) => ({ ...n, proxy: n.proxy ? 'set' : null, ...(await probeNode(n)) })));
-    return json(res, 200, { nodes: report });
+    return json(res, 200, { nodes: report, file: nodesFilePath });
+  }
+
+  // Scan & filter proxies from raw text / uploaded file
+  if (pathname === '/api/admin/scan' && req.method === 'POST') {
+    try {
+      const body = JSON.parse((await readBody(req, 2 * 1024 * 1024)) || '{}');
+      const rawText = String(body.text || '');
+      const save = Boolean(body.save);
+      const concurrency = Math.min(Math.max(Number(body.concurrency) || 8, 1), 20);
+
+      const candidates = parseRawProxies(rawText);
+      if (!candidates.length) return json(res, 400, { error: 'tidak ada format proxy valid yang ditemukan' });
+
+      const scanResult = await scanAndFilter(candidates, { concurrency });
+
+      if (save && scanResult.nodes.length > 0) {
+        fs.mkdirSync(path.dirname(nodesFilePath), { recursive: true });
+        const cleanNodes = scanResult.nodes.map((n) => ({
+          id: n.id,
+          name: n.name,
+          flag: n.flag,
+          proxy: n.proxy,
+        }));
+        fs.writeFileSync(nodesFilePath, JSON.stringify(cleanNodes, null, 2) + '\n', { mode: 0o600 });
+        reloadNodes();
+      }
+
+      return json(res, 200, {
+        ok: true,
+        total: scanResult.total,
+        live: scanResult.live,
+        saved: save,
+        nodes: scanResult.nodes,
+      });
+    } catch (err) {
+      return json(res, 500, { error: err.message });
+    }
   }
 
   if (pathname === '/api/admin/block' && req.method === 'POST') {

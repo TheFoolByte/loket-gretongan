@@ -648,6 +648,32 @@ function adminPage({ host }) {
             </table>
           </div>
 
+          <!-- Proxy Scanner / Import Tool -->
+          <div class="group" id="scanner">
+            <div class="eyebrow"><span>Auto-Scanner / Import Proxy Nodes</span><span class="line"></span></div>
+            <p class="muted" style="font-size:12px;margin-bottom:8px">
+              Input format teks/laporan ProxyCheck atau daftar proxy (<code>ip:port</code> / <code>ip:port:user:pass</code> / URL).
+            </p>
+            <div style="margin-bottom:8px">
+              <input type="file" id="scanFile" accept=".txt,.json" style="margin-bottom:6px">
+              <textarea id="scanText" placeholder="Atau paste daftar proxy di sini..." rows="4" style="font:inherit;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;color:var(--fg);background:rgba(12,16,22,0.6);border:1px solid var(--line);border-radius:10px;padding:8px 10px;width:100%;outline:none;resize:vertical"></textarea>
+            </div>
+            <div class="row" style="align-items:center">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:0">
+                <input type="checkbox" id="scanSave" checked style="width:auto"> Otomatis simpan node verified ke volume (<code>nodes.json</code>)
+              </label>
+              <button class="btn-primary" id="btnScan" onclick="runScanner()" style="flex:0 0 160px;height:38px;font-size:12.5px">⚡ Start Scan</button>
+            </div>
+            <div class="msg" id="smsg"></div>
+            <div id="scanReport" style="display:none;margin-top:12px">
+              <div class="eyebrow" id="srepTitle"><span>Hasil Scan</span><span class="line"></span></div>
+              <table>
+                <thead><tr><th>Region</th><th>Proxy</th><th>Status</th><th>Exit IP</th><th>Latensi</th></tr></thead>
+                <tbody id="scanTable"></tbody>
+              </table>
+            </div>
+          </div>
+
           <div class="group">
             <div class="eyebrow"><span>Aktivitas IP</span><span class="line"></span></div>
             <table>
@@ -733,6 +759,50 @@ function adminPage({ host }) {
   window.del = async (username) => {
     if (!confirm('Hapus ' + username + '?')) return;
     await api('/api/admin/users?username=' + encodeURIComponent(username), { method: 'DELETE' }); load();
+  };
+
+  $('scanFile').onchange = (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = (ev) => { $('scanText').value = ev.target.result; };
+    r.readAsText(f);
+  };
+
+  window.runScanner = async () => {
+    const text = $('scanText').value.trim();
+    const save = $('scanSave').checked;
+    const btn = $('btnScan');
+    const msg = $('smsg');
+    const repBox = $('scanReport');
+    if (!text) {
+      msg.className = 'msg err'; msg.textContent = 'Pilih file atau paste teks proxy terlebih dahulu.';
+      return;
+    }
+    btn.disabled = true;
+    msg.className = 'msg loading'; msg.textContent = 'Memindai & mengetes egress ke ip-api... (bisa memakan waktu)';
+    try {
+      const res = await api('/api/admin/scan', {
+        method: 'POST',
+        body: JSON.stringify({ text, save, concurrency: 8 }),
+      });
+      msg.className = 'msg ok';
+      msg.textContent = 'Selesai: ' + res.live + ' / ' + res.total + ' node hidup & lolos verifikasi.' + (res.saved ? ' Tersimpan ke nodes.json!' : '');
+      $('srepTitle').innerHTML = '<span>Hasil Scan (' + res.live + ' live)</span><span class="line"></span>';
+      $('scanTable').innerHTML = res.nodes.map(n => '<tr>' +
+        '<td>' + (n.flag || '') + ' <code>' + n.id + '</code> ' + n.name + '</td>' +
+        '<td><code>' + n.proxy + '</code></td>' +
+        '<td><span class="badge ok">live</span></td>' +
+        '<td>' + (n.exitIp || '-') + '</td>' +
+        '<td>' + (n.lat ? n.lat + ' ms' : '-') + '</td>' +
+      '</tr>').join('') || '<tr><td colspan="5" class="muted">tidak ada node yang hidup</td></tr>';
+      repBox.style.display = 'block';
+      if (res.saved) load();
+    } catch (err) {
+      msg.className = 'msg err'; msg.textContent = err.message;
+    } finally {
+      btn.disabled = false;
+    }
   };
 
   api('/api/me').then(() => {
