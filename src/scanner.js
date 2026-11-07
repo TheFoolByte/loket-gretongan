@@ -7,7 +7,12 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { openEgress, parseProxy } = require('./upstream');
-const { parseProxyReport } = require('./import-nodes');
+let parseProxyReport;
+try {
+  parseProxyReport = require('../scripts/import-nodes').parseProxyReport;
+} catch {
+  parseProxyReport = require('/app/scripts/import-nodes').parseProxyReport;
+}
 
 const GEO_HOST = 'ip-api.com';
 const GEO_PATH = '/json?fields=status,message,country,countryCode,query';
