@@ -15,35 +15,7 @@ function esc(s = '') {
  */
 function publicPage({ host = '', nodes = [] } = {}) {
   // Mapping Country Code -> Full Country Name & Flag
-  const countryNames = {
-    AU: 'Australia 🇦🇺',
-    BR: 'Brazil 🇧🇷',
-    CA: 'Canada 🇨🇦',
-    CH: 'Switzerland 🇨🇭',
-    CM: 'Cameroon 🇨🇲',
-    CN: 'China 🇨🇳',
-    CY: 'Cyprus 🇨🇾',
-    DE: 'Germany 🇩🇪',
-    EE: 'Estonia 🇪🇪',
-    ES: 'Spain 🇪🇸',
-    FR: 'France 🇫🇷',
-    GB: 'United Kingdom 🇬🇧',
-    HK: 'Hong Kong 🇭🇰',
-    IN: 'India 🇮🇳',
-    IT: 'Italy 🇮🇹',
-    JP: 'Japan 🇯🇵',
-    NL: 'Netherlands 🇳🇱',
-    PT: 'Portugal 🇵🇹',
-    RO: 'Romania 🇷🇴',
-    RU: 'Russia 🇷🇺',
-    SA: 'Saudi Arabia 🇸🇦',
-    SE: 'Sweden 🇸🇪',
-    SG: 'Singapore 🇸🇬',
-    TH: 'Thailand 🇹🇭',
-    US: 'United States 🇺🇸',
-    UZ: 'Uzbekistan 🇺🇿',
-    VN: 'Vietnam 🇻🇳'
-  };
+  const flagOf = (cc) => cc.replace(/./g, (c) => String.fromCodePoint(127397 + c.charCodeAt(0)));
 
   // Group nodes by CC
   const regionMap = {};
@@ -329,9 +301,9 @@ function publicPage({ host = '', nodes = [] } = {}) {
           <div class="group-head"><div class="group-line"></div><div class="eyebrow">Region & Provider</div></div>
           <div class="grid-2">
             <select id="sel-region" class="select-style" onchange="onRegionChange()">
-              <option value="">⚡ Direct (Default Server)</option>
+              <option value="">⚡ Direct</option>
               ${Object.keys(regionMap).sort().map(cc => `
-                <option value="${esc(cc)}">${esc(countryNames[cc] || cc)} (${regionMap[cc].length} Nodes)</option>
+                <option value="${esc(cc)}">${flagOf(esc(cc))}</option>
               `).join('')}
             </select>
 
@@ -376,16 +348,16 @@ function publicPage({ host = '', nodes = [] } = {}) {
         </div>
         <div class="hint" id="hint" style="text-align:center"></div>
 
-        <!-- 6. BUG WILDCARD (Exact argo-node chip styling) -->
-        <div class="wildcard">
-          <div class="eyebrow">Bug Wildcard — CDN Supported</div>
-          <div class="wildcard-list">
-            <span class="chip" onclick="pickBug('support.zoom.us',this)">support.zoom.us</span>
-            <span class="chip" onclick="pickBug('ava.game.naver.com',this)">ava.game.naver.com</span>
-            <span class="chip" onclick="pickBug('quiz.int.vidio.com',this)">quiz.int.vidio.com</span>
-            <span class="chip" onclick="pickBug('graph.instagram.com',this)">graph.instagram.com</span>
-            <span class="chip" onclick="pickBug('',this)">Default (Host)</span>
-          </div>
+        <!-- 6. BUG SELECTOR -->
+        <div class="group reveal">
+          <div class="group-head"><div class="group-line"></div><div class="eyebrow">Bug Wildcard — CDN Supported</div></div>
+          <select id="sel-bug" class="select-style" onchange="onBugChange()">
+            <option value="">Default (Host Asli)</option>
+            <option value="support.zoom.us">support.zoom.us</option>
+            <option value="ava.game.naver.com">ava.game.naver.com</option>
+            <option value="quiz.int.vidio.com">quiz.int.vidio.com</option>
+            <option value="graph.instagram.com">graph.instagram.com</option>
+          </select>
         </div>
 
       </div>
@@ -437,10 +409,8 @@ function publicPage({ host = '', nodes = [] } = {}) {
       if (activeBtn) generate(currentNetwork, currentProtocol, activeBtn);
     }
 
-    function pickBug(bug, el) {
-      currentBug = bug;
-      document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
-      el.classList.add('active');
+    function onBugChange() {
+      currentBug = document.getElementById('sel-bug').value;
       if (activeBtn) generate(currentNetwork, currentProtocol, activeBtn);
     }
 
