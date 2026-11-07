@@ -125,6 +125,24 @@ function parseRawProxies(rawText) {
   return nodes;
 }
 
+/**
+ * Detect provider from hostname / IP.
+ */
+function detectProvider(hostname, ip) {
+  const h = hostname.toLowerCase();
+  if (h.includes('amazonaws') || h.includes('aws') || h.includes('amazon')) return 'AWS';
+  if (h.includes('digitalocean') || h.includes('do')) return 'DigitalOcean';
+  if (h.includes('linode')) return 'Linode';
+  if (h.includes('vultr')) return 'Vultr';
+  if (h.includes('google') || h.includes('gcp')) return 'GCP';
+  if (h.includes('azure') || h.includes('microsoft')) return 'Azure';
+  if (h.includes('hetzner')) return 'Hetzner';
+  if (h.includes('ovh')) return 'OVH';
+  if (h.includes('tencent') || h.includes('qcloud')) return 'Tencent';
+  if (h.includes('aliyun') || h.includes('alibaba')) return 'Aliyun';
+  return 'Generic';
+}
+
 function mapLimit(items, limit, fn) {
   const results = new Array(items.length);
   let next = 0;
@@ -139,7 +157,7 @@ function mapLimit(items, limit, fn) {
 }
 
 /**
- * Scan candidates: probes each, filters live ones, groups by country code (1 per cc).
+ * Scan candidates: probes each, filters live ones, groups by unique id.
  */
 async function scanAndFilter(candidates, { concurrency = 8, timeoutMs = 7000 } = {}) {
   const probed = await mapLimit(candidates, concurrency, async (cand) => {
@@ -148,17 +166,26 @@ async function scanAndFilter(candidates, { concurrency = 8, timeoutMs = 7000 } =
   });
 
   const verifiedNodes = [];
-  const seenCc = new Set();
+  const seenIds = new Set();
 
   for (const item of probed) {
     if (!item.result.ok) continue;
-    const cc = (item.result.cc || item.id || '').toLowerCase();
-    if (!cc || seenCc.has(cc)) continue;
 
-    seenCc.add(cc);
+    const cc = (item.result.cc || 'xx').toLowerCase();
+    const provider = detectProvider(item.proxy, item.result.ip || '');
+    const id = `${cc}-${provider.toLowerCase()}`;
+    
+    // Ensure unique ID
+    let uniqueId = id;
+    let suffix = 1;
+    while (seenIds.has(uniqueId)) {
+      uniqueId = `${id}-${suffix++}`;
+    }
+
+    seenIds.add(uniqueId);
     verifiedNodes.push({
-      id: cc,
-      name: item.result.country || item.name || cc.toUpperCase(),
+      id: uniqueId,
+      name: `${item.result.country || 'Unknown'} - ${provider}`,
       flag: cc.toUpperCase(),
       proxy: item.proxy,
       lat: item.result.ms,

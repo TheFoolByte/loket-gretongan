@@ -371,10 +371,22 @@ function publicPage({ host, sshHost, sshPort, limits, nodes = [] }) {
       <div class="content">
         <!-- Region / Node Selection -->
         <div class="group">
-          <div class="eyebrow"><span>Pilih Region Keluar</span><span class="line"></span></div>
+          <div class="eyebrow"><span>Pilih Region & Provider</span><span class="line"></span></div>
           <select id="sel-node">
             <option value="">⚡ Direct (Railway SG / Asli Server)</option>
-            ${nodes.map((n) => `<option value="${esc(n.id)}">${esc(n.flag || '🌐')} ${esc(n.name)} (${esc(n.id.toUpperCase())})</option>`).join('')}
+            ${(() => {
+              const groups = {};
+              nodes.forEach(n => {
+                const region = n.flag || '🌐';
+                if (!groups[region]) groups[region] = [];
+                groups[region].push(n);
+              });
+              return Object.keys(groups).map(region => `
+                <optgroup label="${esc(region)}">
+                  ${groups[region].map(n => `<option value="${esc(n.id)}">${esc(n.name)}</option>`).join('')}
+                </optgroup>
+              `).join('');
+            })()}
           </select>
         </div>
 
