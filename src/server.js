@@ -24,7 +24,7 @@ const { attachSsh } = require('./ssh-ws');
 const { attachVless } = require('./vless');
 const { tailDropbear } = require('./ssh-log');
 const { isPrivateIp } = require('./net-guard');
-const { publicPage, adminPage, qrSvg } = require('./ui');
+const { publicPage, dashboardPage, adminPage, qrSvg } = require('./ui');
 const { loadNodes, probeNode } = require('./nodes');
 const { openEgress } = require('./upstream');
 const { parseRawProxies, scanAndFilter } = require('./scanner');
@@ -289,7 +289,10 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/' && req.method === 'GET') {
-    // Disabled IP blocking check on public dashboard
+    return html(res, 200, dashboardPage());
+  }
+
+  if (pathname === '/vpn' && req.method === 'GET') {
     return html(res, 200, publicPage({
       host: CONFIG.publicHost,
       sshHost: CONFIG.sshPublicHost || CONFIG.publicHost,
