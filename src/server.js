@@ -584,7 +584,7 @@ server.on('upgrade', (req, socket, head) => {
     ws.once('error', releaseWs);
     if (route.kind === 'ssh') {
       usage.recordAuth({ username: null, protocol: 'ssh', ip });
-      attachSsh(ws, { req, targetHost: CONFIG.sshHost, targetPort: CONFIG.sshPort, stats });
+      attachSsh(ws, { ip, targetHost: CONFIG.sshHost, targetPort: CONFIG.sshPort, stats });
     } else if (route.kind === 'vmess') {
       attachVmess(ws, { port: vmessManager.portFor(route.node?.id), path: CONFIG.vmessInternalPath, stats });
     } else {

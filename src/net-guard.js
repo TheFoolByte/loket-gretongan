@@ -63,14 +63,25 @@ function inRange(ip, base, prefix) {
   }
 }
 
+function ipv4FromBigInt(value) {
+  return [24n, 16n, 8n, 0n]
+    .map((shift) => Number((value >> shift) & 255n))
+    .join('.');
+}
+
+const IPV4_MAPPED_HIGH = ipToBigInt('::ffff:0:0') >> 32n;
+
 function isPrivateIp(ip) {
   if (!ip) return true;
   if (net.isIPv4(ip)) {
     return BLOCKED_V4.some(([base, prefix]) => inRange(ip, base, prefix));
   }
   if (net.isIPv6(ip)) {
-    const mapped = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
-    if (mapped) return isPrivateIp(mapped[1]);
+    const value = ipToBigInt(ip);
+    const high = value >> 32n;
+    if (high === 0n || high === IPV4_MAPPED_HIGH) {
+      return isPrivateIp(ipv4FromBigInt(value & 0xffffffffn));
+    }
     return BLOCKED_V6.some(([base, prefix]) => inRange(ip, base, prefix));
   }
   return true;

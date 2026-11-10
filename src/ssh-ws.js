@@ -9,18 +9,15 @@ const net = require('node:net');
 
 const MAX_PER_IP = Number(process.env.SSH_WS_MAX_PER_IP || 6);
 
-function attachSsh(ws, { req, targetHost, targetPort, stats, log = console }) {
-  const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '')
-    .split(',')[0]
-    .trim();
-  const open = (stats.perIp.get(ip) || 0) + 1;
+function attachSsh(ws, { ip = 'unknown', targetHost, targetPort, stats, log = console }) {
+  const clientIp = String(ip || 'unknown');
+  const open = (stats.perIp.get(clientIp) || 0) + 1;
   if (open > MAX_PER_IP) {
-    log.warn(`ssh-ws: too many connections from ${ip}`);
-    stats.perIp.set(ip, open);
+    log.warn(`ssh-ws: too many connections from ${clientIp}`);
     ws.close(1013, 'too many connections');
     return;
   }
-  stats.perIp.set(ip, open);
+  stats.perIp.set(clientIp, open);
   stats.activeSsh += 1;
 
   const socket = net.createConnection({ host: targetHost, port: targetPort });
@@ -31,9 +28,9 @@ function attachSsh(ws, { req, targetHost, targetPort, stats, log = console }) {
     if (done) return;
     done = true;
     stats.activeSsh = Math.max(0, stats.activeSsh - 1);
-    const remaining = (stats.perIp.get(ip) || 1) - 1;
-    if (remaining > 0) stats.perIp.set(ip, remaining);
-    else stats.perIp.delete(ip);
+    const remaining = (stats.perIp.get(clientIp) || 1) - 1;
+    if (remaining > 0) stats.perIp.set(clientIp, remaining);
+    else stats.perIp.delete(clientIp);
     try {
       socket.destroy();
     } catch {
