@@ -114,7 +114,7 @@ function catalogInner({ nodes = [], host = 'localhost', wildcardDomain = '', vme
   var NODES=${payload},PAGE_SIZE=20,page=0,filtered=NODES,currentConfig='';
   var $=function(id){return document.getElementById(id);};
   var listEl=$('list'),pinfo=$('pinfo'),prev=$('prev'),next=$('next'),protocol=$('f-proto');
-  function flagOf(cc){var value=String(cc||'');if(/^[A-Z]{2}$/.test(value))return value.replace(/./g,function(c){return String.fromCodePoint(127397+c.charCodeAt(0));});return value||'🌐';}
+  function flagOf(cc){var value=String(cc||'');if(value==='XX')return '🌐';if(/^[A-Z]{2}$/.test(value))return value.replace(/./g,function(c){return String.fromCodePoint(127397+c.charCodeAt(0));});return value||'🌐';}
   function esc(value){return String(value).replace(/[&<>"']/g,function(ch){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];});}
   function toast(message){var el=$('toast');el.textContent=message;el.className='show';clearTimeout(toast.timer);toast.timer=setTimeout(function(){el.className='';},2200);}
   function render(){
