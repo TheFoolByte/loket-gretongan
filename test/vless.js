@@ -14,22 +14,24 @@ class TestSocket extends EventEmitter {
     this.OPEN = 1;
     this.readyState = 1;
     this.sent = [];
+    this.closeInfo = null;
   }
   send(data) { this.sent.push(Buffer.from(data)); }
-  close() { this.readyState = 3; this.emit('close'); }
+  close(code, reason) { this.closeInfo = { code, reason }; this.readyState = 3; this.emit('close'); }
 }
 
 (async () => {
   const echo = net.createServer((socket) => socket.on('data', (data) => socket.write(data)));
   await new Promise((resolve) => echo.listen(0, '127.0.0.1', resolve));
   const ws = new TestSocket();
+  const counters = { rx: 0, tx: 0 };
   try {
     // The socket has completed `connect` before attachVless receives it, just
     // like an authenticated multi-region egress through an upstream proxy.
     attachVless(ws, {
       kind: 'vless',
       users: { findByUuid: () => ({ username: 'test' }) },
-      stats: { rx: 0, tx: 0 },
+      stats: counters,
       connect: () => new Promise((resolve) => {
         const socket = net.createConnection({ host: '127.0.0.1', port: echo.address().port }, () => resolve(socket));
       }),
@@ -47,6 +49,23 @@ class TestSocket extends EventEmitter {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     assert.equal(Buffer.concat(ws.sent).toString('hex'), expected.toString('hex'), `relay frames: ${ws.sent.map((data) => data.toString('hex')).join(',')}`);
+    assert.ok(counters.vlessRx >= header.length, 'VLESS client-to-service bytes are counted by protocol');
+    assert.ok(counters.vlessTx >= Buffer.byteLength('ping'), 'VLESS service-to-client payload is counted by protocol');
+
+    const rejected = new TestSocket();
+    let rejectedConnects = 0;
+    attachVless(rejected, {
+      kind: 'vless',
+      users: { findByUuid: () => ({ username: 'test' }) },
+      stats: {},
+      log: { warn() {}, error() {} },
+      onAuth: () => false,
+      connect: () => { rejectedConnects += 1; throw new Error('must not connect'); },
+    });
+    rejected.emit('message', header);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(rejected.readyState, 3, 'relay closes a user session rejected by the limiter');
+    assert.equal(rejectedConnects, 0, 'limited session never starts an egress connection');
     console.log('upstream relay startup: all assertions passed');
   } finally {
     ws.close();
