@@ -2,8 +2,7 @@
  * Outbound destination guard.
  *
  * The proxy is reachable from the internet, so it must not become an SSRF
- * primitive into the container's own network, Railway's private network, or the
- * cloud metadata endpoint.
+ * primitive into the container/host private network or cloud metadata endpoint.
  */
 'use strict';
 

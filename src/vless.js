@@ -131,6 +131,11 @@ function attachVless(ws, { kind, users, stats, log = console, isBlocked = () => 
   let bytesOut = 0;
   let udpSocket = null;
   let closed = false;
+  const countBytes = (direction, bytes) => {
+    const protocolKey = `${kind}${direction === 'rx' ? 'Rx' : 'Tx'}`;
+    stats[direction] = (stats[direction] || 0) + bytes;
+    stats[protocolKey] = (stats[protocolKey] || 0) + bytes;
+  };
 
   const closeAll = () => {
     if (closed) return;
@@ -167,7 +172,7 @@ function attachVless(ws, { kind, users, stats, log = console, isBlocked = () => 
     const chunk = Buffer.from(raw);
     try {
       if (!remote && !udpSocket) {
-        stats.rx += chunk.length;
+        countBytes('rx', chunk.length);
         const header = kind === 'trojan' ? readTrojanHeader(chunk) : readVlessHeader(chunk);
         if (header.hasError) return closeAll();
 
@@ -198,7 +203,7 @@ function attachVless(ws, { kind, users, stats, log = console, isBlocked = () => 
       }
 
       if (remote) {
-        stats.rx += chunk.length;
+        countBytes('rx', chunk.length);
         bytesIn += chunk.length;
         remote.write(chunk);
       }
@@ -224,7 +229,7 @@ function attachVless(ws, { kind, users, stats, log = console, isBlocked = () => 
     if (resp.length && ws.readyState === ws.OPEN) ws.send(resp);
     if (header.rawClientData.length) socket.write(header.rawClientData);
     socket.on('data', (data) => {
-      stats.tx += data.length;
+      countBytes('tx', data.length);
       bytesOut += data.length;
       if (ws.readyState === ws.OPEN) ws.send(data);
     });
@@ -238,7 +243,7 @@ function attachVless(ws, { kind, users, stats, log = console, isBlocked = () => 
     let headerSent = false;
 
     udpSocket.on('message', (msg) => {
-      stats.tx += msg.length;
+      countBytes('tx', msg.length);
       if (ws.readyState !== ws.OPEN) return;
       ws.send(headerSent ? msg : Buffer.concat([replyHeader, msg]));
       headerSent = true;

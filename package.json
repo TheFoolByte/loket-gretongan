@@ -2,14 +2,14 @@
   "name": "loket-gretongan",
   "version": "1.0.0",
   "private": true,
-  "description": "Hardened single-service Railway gateway: authenticated dashboard, SSH-over-WS, VLESS/Trojan over WS with per-user auth",
+  "description": "Portable gateway container: admin dashboard, SSH-over-WS, VLESS/VMess/Trojan over WS",
   "main": "src/server.js",
   "type": "commonjs",
   "scripts": {
     "start": "node src/server.js",
-    "check": "node --check src/server.js && node --check src/auth.js && node --check src/users.js && node --check src/vless.js && node --check src/net-guard.js && node --check src/ssh-ws.js && node --check scripts/import-nodes.js && node --check scripts/probe-nodes.js",
+    "check": "node --check src/server.js && node --check src/auth.js && node --check src/users.js && node --check src/vless.js && node --check src/usage.js && node --check src/ssh-log.js && node --check src/net-guard.js && node --check src/ssh-ws.js && node --check src/ui.js && node --check src/xray-vmess.js && node --check src/vmess-ws.js && node --check src/wildcard.js && node --check scripts/import-nodes.js && node --check scripts/probe-nodes.js && bash -n entrypoint.sh",
     "probe": "node scripts/probe-nodes.js",
-    "test": "node test/smoke.js && node test/upstream.js && node test/vless.js && node test/import-nodes.js"
+    "test": "node test/smoke.js && node test/upstream.js && node test/vless.js && node test/import-nodes.js && node test/ui.js && node test/vmess.js"
   },
   "dependencies": {
     "maxmind": "^5.0.8",

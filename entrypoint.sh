@@ -11,10 +11,9 @@ die() { printf '[loket] ERROR: %s\n' "$*" >&2; exit 1; }
 
 DATA_DIR="${DATA_DIR:-/data}"
 SSH_PORT="${SSH_PORT:-22}"
-# Railway rewrites PORT when you attach a TCP proxy (e.g. PORT=22 for SSH), so
-# the web tier must not follow it. WEB_PORT is ours; a collision with SSH_PORT
-# is corrected instead of letting node die on EADDRINUSE.
-WEB_PORT="${WEB_PORT:-8080}"
+# Cloud platforms commonly assign PORT for HTTP/WebSocket ingress. WEB_PORT can
+# override it explicitly for local Docker or a VPS.
+WEB_PORT="${WEB_PORT:-${PORT:-8080}}"
 if [ "$WEB_PORT" = "$SSH_PORT" ]; then
   log "WEB_PORT=$WEB_PORT collides with SSH_PORT — falling back to 8080"
   WEB_PORT=8080
@@ -87,10 +86,18 @@ start_web() {
     SSH_WS_PATH="${SSH_WS_PATH:-/ssh-ws}" \
     VLESS_PATH="${VLESS_PATH:-/vless-ws}" \
     TROJAN_PATH="${TROJAN_PATH:-/trojan-ws}" \
+    VMESS_PATH="${VMESS_PATH:-/vmess-ws}" \
+    VMESS_INTERNAL_PATH="${VMESS_INTERNAL_PATH:-/vmess}" \
+    VMESS_ENABLED="${VMESS_ENABLED:-0}" \
+    VMESS_API_PORT="${VMESS_API_PORT:-10085}" \
+    VMESS_PORT_BASE="${VMESS_PORT_BASE:-15000}" \
+    XRAY_BIN="${XRAY_BIN:-/usr/local/bin/xray}" \
+    WILDCARD_DOMAIN="${WILDCARD_DOMAIN:-}" \
     ADMIN_PASS="$ADMIN_PASS" \
     SESSION_SECRET="${SESSION_SECRET:-}" \
     PUBLIC_HOST="${PUBLIC_HOST:-}" \
     COOKIE_SECURE="${COOKIE_SECURE:-1}" \
+    TRUST_PROXY="${TRUST_PROXY:-1}" \
     LOGIN_LIMIT="${LOGIN_LIMIT:-8}" \
     SSH_PUBLIC_HOST="${SSH_PUBLIC_HOST:-}" \
     SSH_PUBLIC_PORT="${SSH_PUBLIC_PORT:-}" \
@@ -151,8 +158,8 @@ start_cloudflared
 start_sni
 
 log "ready"
-# Exit as soon as any supervised process dies so Railway restarts the container
-# instead of leaving it half-alive.
+# Exit as soon as any supervised process dies so the platform restarts the
+# container instead of leaving it half-alive.
 wait -n "${pids[@]}"
 log "a supervised process exited — container will restart"
 exit 1

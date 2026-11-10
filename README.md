@@ -1,177 +1,140 @@
-# LOKET GRETONGAN
+# Loket Gretongan
 
-> *"loketnya satu, gretongannya buat yang punya."* — gateway pribadi, bukan layanan publik.
+Gateway berbasis satu Docker image untuk **Railway, Render, atau VPS**. Fitur mencakup panel admin, generator akun SSH-over-WebSocket, VLESS, Trojan, dan VMess melalui WebSocket. Render dan Railway memakai jalur HTTP/WebSocket yang sama; VPS dapat membuka port TCP tambahan bila memang dibutuhkan.
 
-Satu container Railway untuk: **dashboard web**, **SSH over WebSocket**, **VLESS-WS**,
-**Trojan-WS**, dan opsional **SSH-SNI (stunnel)** + **Cloudflare Tunnel**.
+File `/data/nodes.json` dan variabel `NODES` milik operator mengalahkan fallback `nodes.verified.json` yang dipertahankan demi kompatibilitas. Tinjau sumber node sebelum dipakai; set `NODES=[]` untuk memaksa mode direct-only. File data persisten disimpan di `/data` pada semua platform.
 
-Ditulis ulang dari nol. Bukan fork dari project publik mana pun.
+> Wildcard adalah pemetaan nama host ke service, bukan protokol atau port baru. Untuk node `sg`, `WILDCARD_DOMAIN=loket.example.com` menghasilkan host `sg.loket.example.com`.
 
-Nama `gretongan` cuma lelucon internal — jangan dipakai di domain, banner, atau nama service.
+## Port dan kemampuan platform
 
-## Kenapa ada versi ini
+| Target | HTTPS/WebSocket | Raw SSH/TCP | Penyimpanan |
+|---|---|---|---|
+| Railway | Ya, lewat domain publik dan `PORT` | Opsional: buat TCP Proxy ke port container 22; gunakan hostname dan port publik yang Railway berikan | Pasang Volume di `/data` |
+| Render Web Service | Ya, lewat satu port publik `PORT`; SSH-WS bisa lewat `/ssh-ws` | Tidak tersedia untuk raw TCP/SSH atau SSH-SNI publik | Pasang Persistent Disk di `/data` |
+| VPS | Ya, sebaiknya di belakang reverse proxy HTTPS | Opsional, petakan port 22 dan 2443 sesuai kebutuhan/firewall | Docker volume atau bind mount di `/data` |
 
-Versi yang beredar di GitHub punya tiga masalah yang bikin Railway kamu bisa diambil alih:
+Container yang sama membawa Dropbear, Node gateway, dan Xray. `EXPOSE` hanya metadata Docker: sebuah platform tetap harus mendukung dan secara eksplisit mempublikasikan raw TCP agar SSH/SNI bisa diakses dari internet. Image saat ini menargetkan Linux `amd64` karena binary Xray dan cloudflared yang dipin.
 
-| Masalah di versi lama | Di sini |
+## Variabel konfigurasi
+
+| Variabel | Kegunaan |
 |---|---|
-| `requireAdmin()` di-hardcode `return true` → API user terbuka | Semua `/api/*` butuh session cookie bertanda tangan + CSRF |
-| VLESS/Trojan relay tanpa cek UUID → open proxy | UUID/password per user wajib valid sebelum relay |
-| Relay bebas ke alamat internal | Outbound guard: blokir RFC1918, loopback, link-local, metadata |
-| Password user plaintext, world-readable | Hanya hash scrypt; file `0600`; password tak pernah dikembalikan API |
-| Token Cloudflare ikut ke-commit & di-`COPY` ke image | Semua secret dari env; image tidak memuat file secret |
-| Node jalan sebagai root | Web tier user `app` (UID 10001); aksi OS lewat 1 helper sudo |
-| `cloudflared` versi `latest` tanpa checksum | Versi + SHA-256 dipin di Dockerfile |
+| `ADMIN_PASS` | Wajib; password admin minimal 12 karakter. |
+| `SESSION_SECRET` | Tetapkan nilai acak yang kuat dan stabil agar sesi tetap konsisten setelah restart. |
+| `PORT` / `WEB_PORT` | Port HTTP/WebSocket. Gunakan `PORT` yang disediakan platform; `WEB_PORT` hanya untuk override eksplisit. Aplikasi bind ke `0.0.0.0`. |
+| `DATA_DIR` | Direktori state; default `/data`. Volume menyimpan akun, host key SSH, log, dan `nodes.json`. |
+| `PUBLIC_HOST` | Host dasar yang dipakai profil saat wildcard tidak tersedia atau untuk koneksi direct. |
+| `WILDCARD_DOMAIN` | Domain dasar tanpa skema/path, misalnya `loket.example.com` (tidak perlu menulis `*.`). |
+| `VMESS_ENABLED` | Aktifkan pilihan/profil VMess. Docker image mengaktifkannya; di luar Docker default-nya mati kecuali Xray disediakan. |
+| `SSH_PUBLIC_HOST` / `SSH_PUBLIC_PORT` | Host dan port dari raw TCP proxy publik. Kosongkan di Render; SSH-WS tetap tersedia lewat WebSocket. |
+| `SSH_PORT` | Port Dropbear di dalam container; default `22`. |
+| `TRUST_PROXY` | Default `1` untuk ingress di balik proxy platform. Pada VPS yang menerima koneksi langsung tanpa reverse proxy tepercaya, set `0` agar header `X-Forwarded-For` dari klien diabaikan. |
+| `COOKIE_SECURE` | Default `1`; gunakan HTTPS pada domain publik. Untuk pengembangan lokal HTTP saja, set `0`. |
+| `NODES` / `NODES_FILE` | Urutan sumber: file `/data/nodes.json`, `NODES` env, lalu fallback `nodes.verified.json`; `NODES=[]` secara eksplisit mengalahkan semuanya untuk direct-only. Maksimal 256 node. |
+| `SIGNUP_PER_IP`, `SIGNUP_DAILY`, `SIGNUP_MAX_DAYS`, `SIGNUP_BURST` | Batas signup. Generator tidak meminta masa aktif; server menetapkannya sendiri sesuai kebijakan runtime (default maksimum publik 7 hari). |
+| `ENABLE_SNI`, `SSH_SSL_PORT` | Opsional; hidupkan listener TLS/SNI raw di port `2443` hanya pada target yang mendukung raw TCP. Default SNI mati. |
+| `ENABLE_CLOUDFLARED`, `CF_TUNNEL_TOKEN` | Opsional untuk Cloudflare Tunnel. Tunnel tidak diperlukan untuk HTTP/WebSocket biasa di balik domain yang sudah diarahkan ke service. |
 
-## Deploy
+Jangan commit file `.env` atau memasukkan password, token, dan kredensial proxy ke README/repository.
+
+## Deploy ke Railway
+
+Pilih Dockerfile pada root repository. Tambahkan Volume dengan mount path `/data`; volume tersedia saat container berjalan. Tambahkan sekurangnya `ADMIN_PASS` dan `SESSION_SECRET`, lalu isi `PUBLIC_HOST` dan `WILDCARD_DOMAIN` setelah hostname diputuskan. Railway menyediakan port HTTP; aplikasi mengikuti nilai `PORT` tersebut.
+
+Di **Settings → Networking**, tambahkan domain dasar dan wildcard pada service. Railway menampilkan DNS record yang harus dibuat; ikuti nilai persis, termasuk CNAME dan TXT verifikasi. Untuk wildcard, Railway juga menggunakan record `_acme-challenge`; bila Cloudflare dipakai, record ini harus DNS-only agar verifikasi sertifikat berhasil.
+
+Raw SSH adalah pilihan terpisah. Buat **TCP Proxy** yang mengarah ke port internal `22`, lalu gunakan hostname dan port publik yang Railway berikan sebagai `SSH_PUBLIC_HOST` dan `SSH_PUBLIC_PORT`. Kalau memakai hostname sendiri di Cloudflare untuk raw TCP, record harus DNS-only dan klien tetap harus memakai port publik Railway. Jalur HTTP/WebSocket dan TCP dapat hidup bersamaan. Lihat [Railway TCP Proxy](https://docs.railway.com/networking/tcp-proxy), [domain dan wildcard Railway](https://docs.railway.com/networking/domains/working-with-domains), serta [Railway Volumes](https://docs.railway.com/volumes).
+
+## Deploy ke Render
+
+Buat **Web Service** dari repository ini dengan Dockerfile yang ada, lalu pasang **Persistent Disk** di `/data`. Render menyediakan `PORT`; jangan mengunci port publik ke nilai lain. Tambahkan domain dasar dan wildcard ke Web Service, lalu buat record DNS dan verifikasi persis sesuai instruksi Render. TLS diurus oleh Render setelah domain terverifikasi.
+
+Render Web Service menerima HTTPS dan WebSocket pada port publik yang sama. SSH-over-WebSocket berfungsi di `/ssh-ws`, tetapi port 22/2443 di dalam container tidak menjadi raw TCP publik. Untuk SSH di Render, gunakan profil SSH-WS. Lihat [custom domains](https://render.com/docs/custom-domains), [WebSocket](https://render.com/docs/websocket), dan [Web Services](https://render.com/docs/web-services).
+
+## Deploy di VPS dengan Docker
+
+Pasang Docker, clone repository, lalu build image:
 
 ```bash
-git init && git add -A && git commit -m "loket hardened"
-git remote add origin <repo-kamu> && git push -u origin main
+git clone https://github.com/TheFoolByte/loket-gretongan.git
+cd loket-gretongan
+docker build -t loket-gretongan:local .
 ```
 
-Railway → **New Project → Deploy from GitHub** → pilih repo → tambahkan:
+Buat `.env` lokal (jangan commit) dengan `ADMIN_PASS`, `SESSION_SECRET`, `PUBLIC_HOST`, dan `WILDCARD_DOMAIN`. Jalankan di belakang reverse proxy HTTPS yang meneruskan header klien dengan benar:
 
-1. **Variables** (wajib: `ADMIN_PASS`, min 12 karakter)
-   ```env
-   ADMIN_PASS=<openssl rand -base64 24>
-   SESSION_SECRET=<openssl rand -hex 32>
-   PUBLIC_HOST=domain-kamu.up.railway.app
-   ```
-2. **Volume** → mount path **`/data`** (host key SSH + `users.json` ikut tersimpan)
-3. **Networking**:
-   - Public domain → port **8080** (dashboard)
-   - **TCP Proxy** → port **22** (SSH langsung)
-   - Kalau mau SSH-WS tanpa TCP proxy: isi `CF_TUNNEL_TOKEN` dan arahkan tunnel ke `http://localhost:8080`
+```bash
+docker run -d --name loket-gretongan --restart unless-stopped \
+  --env-file .env \
+  -e TRUST_PROXY=1 \
+  -p 127.0.0.1:8080:8080 \
+  -p 2222:22 \
+  -v loket-data:/data \
+  loket-gretongan:local
+```
 
-> Satu service Railway hanya punya **satu** TCP proxy. Kalau butuh SSH-SNI (2443)
-> *dan* SSH langsung (22) sekaligus, pakai Cloudflare Tunnel untuk salah satunya,
-> atau pisahkan jadi dua service.
+Reverse proxy web diarahkan ke `127.0.0.1:8080`. Port SSH publik `2222` adalah opsional; jika dipakai, set `SSH_PUBLIC_HOST` dan `SSH_PUBLIC_PORT=2222` di `.env`, dan izinkan port itu di firewall. Bila memakai listener SNI, set `ENABLE_SNI=1` dan petakan port internal yang dipilih (default `2443`). Tanpa reverse proxy tepercaya, set `TRUST_PROXY=0`; jangan biarkan aplikasi web publik berjalan tanpa HTTPS.
 
-## Panel
+Untuk DNS di Cloudflare, arahkan host dasar dan `*` ke reverse proxy VPS. Wildcard hanya menangani pemetaan hostname; sertifikat wildcard dan terminasi HTTPS harus disiapkan pada reverse proxy atau layanan TLS yang digunakan.
 
-| Path | Siapa | Isi |
+## Hostname dan Cloudflare
+
+Pilih satu subdomain khusus untuk Loket, misalnya `loket.example.com`, agar tidak bertabrakan dengan route Worker atau aplikasi lain di domain utama. Set `PUBLIC_HOST=loket.example.com` dan `WILDCARD_DOMAIN=loket.example.com`; hostname node lalu menjadi `sg.loket.example.com`, `jp.loket.example.com`, dan seterusnya. Pastikan record dasar dan `*` diarahkan ke target platform yang benar. Jangan mengubah route Worker yang sudah ada sebelum target dan hostname dipastikan.
+
+Untuk HTTP/WebSocket, Cloudflare dapat dipakai sebagai DNS/proxy sesuai konfigurasi sertifikat dan platform. Raw TCP berbeda: Cloudflare DNS biasa tidak mem-proxy port TCP arbitrer, sehingga hostname untuk Railway TCP Proxy harus DNS-only. Wildcard DNS sendiri tidak menambah dukungan transport. Lihat [Cloudflare wildcard DNS](https://developers.cloudflare.com/dns/manage-dns-records/reference/wildcard-dns-records/).
+
+## Panel admin dan protokol
+
+| Path | Akses | Fungsi |
 |---|---|---|
-| `/` | publik | generator config: pilih masa aktif → akun + SSH/VLESS/Trojan + QR, langsung tampil |
-| `/admin` | admin (`ADMIN_PASS`) | daftar user + IP + volume per protokol, blok IP, blok/hapus user |
+| `/` | Publik | Ringkasan service dan protokol yang aktif. |
+| `/vpn` | Publik | Generator akun; memilih protokol/node lalu membuat akun dan menampilkan profil/QR. Tidak ada pemilih masa aktif di UI. |
+| `/admin` | Admin (`ADMIN_PASS`) | Live bandwidth, total trafik per protokol, akun/IP, blokir akun/IP, kesehatan node, scan/import, dan Pull & Merge. |
+| `/health` | Platform/internal | Health check container. |
 
-Pembatas publik: `SIGNUP_PER_IP` akun per 24 jam per IP, `SIGNUP_DAILY` total harian,
-`SIGNUP_MAX_DAYS` batas masa aktif, `SIGNUP_BURST` percobaan per 10 menit.
-Semua signup tercatat: IP, user-agent, protokol, volume.
+Live bandwidth merupakan sampel selisih byte payload relay tiap 2 detik; counter total reset saat proses restart. VLESS/Trojan memiliki byte usage per akun. SSH menampilkan login yang dapat diatribusikan dari log autentikasi. VMess dicatat agregat karena Xray menangani autentikasi di proses tersendiri; statistik byte per-user VMess belum tersedia.
 
-SSH tidak lewat web tier, jadi login SSH diatribusikan dari log dropbear
-(`/data/dropbear.log`); VLESS/Trojan diatribusikan dari UUID/password masing-masing user.
+Protokol publik berjalan melalui TLS + WebSocket: SSH-WS di `/ssh-ws`, VLESS di `/vless-ws`, Trojan di `/trojan-ws`, dan VMess di `/vmess-ws`. Xray-core v26.3.27 dipin serta checksum-nya diverifikasi di Dockerfile; daftar user VMess disinkronkan secara dinamis. Dokumentasi Xray menandai VMess dan WebSocket transport sebagai deprecated; VLESS lebih disarankan untuk penggunaan baru, tetapi VMess dipertahankan demi kompatibilitas klien. UDP tidak diteruskan lewat node egress.
 
-## Pakai
+Signup publik dibatasi oleh `SIGNUP_PER_IP`, `SIGNUP_DAILY`, `SIGNUP_MAX_DAYS`, dan `SIGNUP_BURST`. Password akun disimpan sebagai hash; password/profil lengkap hanya dikembalikan sekali ketika akun dibuat. Endpoint demo `/api/config` dinonaktifkan dan pemindai port publik tidak tersedia.
 
-1. Buka `https://<domain>/` → login `ADMIN_PASS`.
-2. **Buat user** → dapat username, password (sekali), dan **Trojan secret** (sekali).
-3. SSH:
-   ```bash
-   ssh -p <PORT_TCP_PROXY> <user>@<HOST_TCP_PROXY>
-   ```
-4. VLESS/Trojan (v2rayN / NekoBox):
-   - path: `/vless-ws` · uuid = kolom *VLESS uuid* di dashboard
-   - path: `/trojan-ws` · password = Trojan secret saat user dibuat
+## Node egress
 
-## Multi-node (exit per negara)
+Urutan pemuatan adalah file `/data/nodes.json`, variabel `NODES`, lalu fallback repository `nodes.verified.json` untuk menjaga instalasi lama tetap berfungsi. File/env operator menang atas fallback. `NODES=[]` secara eksplisit mengalahkan file volume maupun fallback untuk direct-only. Tinjau daftar bawaan dan gunakan hanya endpoint proxy yang dipercaya atau memang diizinkan. Contoh:
 
-Isi `NODES` dengan proxy yang kamu punya/sewa:
-
-```env
-NODES=[{"id":"sg","name":"Singapore","flag":"SG","proxy":"socks5://user:pass@1.2.3.4:1080"},
-       {"id":"us","name":"United States","flag":"US","proxy":"http://user:pass@5.6.7.8:8080"}]
+```json
+[
+  {"id":"sg","name":"Singapore","flag":"SG","proxy":"socks5://user:pass@proxy.example:1080"},
+  {"id":"jp","name":"Japan","flag":"JP","proxy":"http://user:pass@proxy.example:8080"}
+]
 ```
 
-Alurnya: client tetap menghubungi domain kamu; relay keluar lewat proxy node itu,
-jadi **exit IP benar-benar di negara tersebut**. Panel menampilkan pilihan node,
-`/admin` menampilkan status + latensi tiap node (`/api/admin/nodes`).
+Import laporan secara offline dengan `node scripts/import-nodes.js result_proxy.txt nodes.json --regions SG,JP,US`, lalu letakkan hasil sebagai `/data/nodes.json`. Untuk menguji endpoint yang memang berhak kamu uji, gunakan `node scripts/probe-nodes.js nodes.json --write nodes.verified.json`. Probe koneksi bukan jaminan uptime. Operator proxy dapat melihat trafik; jangan memasukkan node dari hasil scan publik yang kepemilikan/izinnya tidak jelas.
 
-Daftar panjang (banyak negara): taruh array yang sama di file volume
-**`/data/nodes.json`** — file menang dari env `NODES`, dan tidak perlu diedit
-di panel Railway tiap ganti node (max 48 node).
+## Keamanan dan pengembangan
 
-`nodes.example.json` berisi **semua 27 negara** yang ada di laporan proxy
-(1 node per negara). **MY tidak ada di laporan tersebut** — bukan disembunyikan
-atau diganti region lain.
+Container menolak boot tanpa password admin minimal 12 karakter. Panel memakai session cookie bertanda tangan dan CSRF; proses web berjalan sebagai user non-root dan aksi akun OS dibatasi ke helper `loket-user`. Egress memblokir alamat privat, loopback, link-local, serta metadata. Jangan aktifkan `ALLOW_PRIVATE_TARGETS=1` pada service publik. Set `TRUST_PROXY=0` bila ingress langsung ke VPS; jika `1`, pasang hanya di belakang reverse proxy yang mengganti/membersihkan header forwarded.
 
-Impor laporan scan sendiri secara offline:
+Untuk pengembangan lokal:
 
 ```bash
-# semua negara, deteksi scheme otomatis dari port (1080/10808 → SOCKS5)
-node scripts/import-nodes.js result_proxy.txt nodes.json --regions '*'
-# negara tertentu saja
-node scripts/import-nodes.js result_proxy.txt nodes.json --regions SG,JP,US
-# paksa satu transport untuk semua node
-node scripts/import-nodes.js result_proxy.txt nodes.json --scheme socks5
-# lalu upload nodes.json ke /data/nodes.json di volume Railway.
-```
-
-Deteksi `--scheme auto` (default) menebak protokol dari port: `1080`/`10808`
-(dan apa pun yang dikasih via `--socks-ports`) dianggap SOCKS5, sisanya HTTP
-CONNECT. Laporan scanner tidak mencatat jenis protokol, jadi pastikan port
-benar-benar SOCKS5 — kalau ragu pakai `--scheme http`/`--scheme socks5` untuk
-memaksa. Hanya status `Live` yang diambil, maksimal satu node per negara;
-import offline, tidak menguji atau mengklaim endpoint masih hidup. Env
-`NODES`/`nodes.json` tetap mendukung HTTP CONNECT dan SOCKS5 dengan
-autentikasi user/password.
-
-Cek node sebelum deploy (handshake beneran + exit IP & negara lewat tunnel):
-
-```bash
-node scripts/probe-nodes.js nodes.example.json --write nodes.verified.json
-# atau: npm run probe -- nodes.example.json --write nodes.verified.json
-```
-
-Probe menjalankan SOCKS5/HTTP CONNECT sungguhan, lalu (kalau bisa) meminta
-`ip-api.com` lewat tunnel untuk membaca **exit IP + negara asli**. Node yang
-exit-nya beda negara dari flag-nya ditandai `<-- expected XX`; `--write` hanya
-menulis node yang hidup dan region-nya cocok (atau tak terbaca) ke file hasil.
-Hasil scan bukan jaminan — jalankan ulang sebelum dipakai karena proxy hasil
-scan orang lain sering mati/berganti.
-
-Catatan jujur:
-
-- Proxy harus milikmu (VPS $3/negara atau provider residential/datacenter berbayar).
-  Daftar proxy hasil scan milik orang lain bukan opsi: trafikmu bisa dibaca operatornya
-  dan memakainya adalah akses tanpa izin.
-- UDP belum didukung lewat node proxy (VLESS UDP akan ditolak).
-- Satu node = satu jalur; kualitasnya sebaik proxy-nya (latensi, uptime).
-
-## Keamanan yang perlu kamu tahu
-
-- **Tidak ada password default.** Container menolak boot tanpa `ADMIN_PASS` ≥ 12 karakter.
-- **Rate limit login**: 8 percobaan/menit/IP (`LOGIN_LIMIT`).
-- **Relay privat diblokir** kecuali `ALLOW_PRIVATE_TARGETS=1` (jangan diaktifkan di Railway).
-- **User SSH tidak punya sudo.** Helper `loket-user` hanya bisa `add/passwd/del`.
-- **Password & Trojan secret hanya tampil sekali.** Kalau hilang → reset password / buat user baru.
-- `users.json` mode `0600`, milik `app`. Host key SSH persisten di `/data/hostkeys`.
-
-## Development
-
-```bash
-npm install
-npm test                       # smoke test: auth, CSRF, CRUD, throttle, ws
+npm ci
+npm run check
+npm test
 PORT=8080 ADMIN_PASS=dev-password-123 DATA_DIR=./data \
-  LOKET_NO_HELPER=1 COOKIE_SECURE=0 npm start
+  LOKET_NO_HELPER=1 COOKIE_SECURE=0 TRUST_PROXY=0 VMESS_ENABLED=0 npm start
 ```
 
-`LOKET_NO_HELPER=1` melewati `useradd` — berguna untuk uji UI tanpa root.
+## Berkas utama
 
-## Struktur
+| Berkas | Tanggung jawab |
+|---|---|
+| `Dockerfile`, `entrypoint.sh` | Image lintas platform, service, dan port. |
+| `src/server.js`, `src/ui.js` | HTTP/API, host routing, generator, Dashboard, Admin. |
+| `src/vless.js`, `src/vmess-ws.js`, `src/xray-vmess.js` | Relay VLESS/Trojan, bridge VMess, dan sinkronisasi Xray. |
+| `src/wildcard.js`, `src/nodes.js` | Validasi hostname dan pemetaan node egress. |
+| `src/usage.js`, `src/ssh-log.js` | Statistik akun, IP, dan login SSH. |
+| `src/net-guard.js`, `src/ssh-ws.js` | Perlindungan egress dan SSH-over-WebSocket. |
 
-```
-src/server.js     HTTP + dashboard + routing websocket
-src/auth.js       scrypt, session HMAC, throttle
-src/users.js      users.json + pemanggilan helper OS
-src/vless.js      parser VLESS/Trojan + relay TCP/UDP (dengan auth)
-src/net-guard.js  blokir target privat/metadata
-src/ssh-ws.js     pipe websocket -> dropbear
-scripts/loket-user  satu-satunya operasi root (sudoers terbatas)
-```
-
-## Catatan
-
-Alat ini membuat container kamu jadi gateway jaringan. Pastikan kamu paham
-kebijakan penggunaan (AUP) Railway sebelum dipakai untuk trafik yang tidak
-kamu kendalikan.
+Pembaruan ini hanya menyiapkan kode/dokumentasi di branch kerja. Tidak ada perubahan DNS/Worker Cloudflare, service Render, atau deployment yang dilakukan.
