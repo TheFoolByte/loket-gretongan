@@ -33,6 +33,7 @@ Container yang sama membawa Dropbear, Node gateway, dan Xray. `EXPOSE` hanya met
 | `COOKIE_SECURE` | Default `1`; gunakan HTTPS pada domain publik. Untuk pengembangan lokal HTTP saja, set `0`. |
 | `NODES` / `NODES_FILE` | Urutan sumber: file `/data/nodes.json`, `NODES` env, lalu fallback `nodes.verified.json`; `NODES=[]` secara eksplisit mengalahkan semuanya untuk direct-only. Maksimal 256 node. |
 | `SIGNUP_PER_IP`, `SIGNUP_DAILY`, `SIGNUP_MAX_DAYS`, `SIGNUP_BURST` | Batas signup. Generator tidak meminta masa aktif; server menetapkannya sendiri sesuai kebijakan runtime (default maksimum publik 7 hari). |
+| `WS_MAX_CONNECTIONS`, `WS_MAX_PER_IP`, `WS_MAX_PER_USER`, `WS_IDLE_TIMEOUT_MS` | Default: 100 tunnel WebSocket total, 6 per IP, 3 per akun untuk VLESS/Trojan, dan tutup tunnel setelah 10 menit tanpa aktivitas. Limit global/IP berlaku untuk SSH-WS, VLESS, Trojan, dan VMess; akun VMess/SSH tidak bisa dibatasi per-user di gateway karena autentikasi berlangsung di Xray/Dropbear. Nilai dihitung per proses. |
 | `ENABLE_SNI`, `SSH_SSL_PORT` | Opsional; hidupkan listener TLS/SNI raw di port `2443` hanya pada target yang mendukung raw TCP. Default SNI mati. |
 | `ENABLE_CLOUDFLARED`, `CF_TUNNEL_TOKEN` | Opsional untuk Cloudflare Tunnel. Tunnel tidak diperlukan untuk HTTP/WebSocket biasa di balik domain yang sudah diarahkan ke service. |
 
@@ -94,6 +95,8 @@ Untuk HTTP/WebSocket, Cloudflare dapat dipakai sebagai DNS/proxy sesuai konfigur
 | `/health` | Platform/internal | Health check container. |
 
 Live bandwidth merupakan sampel selisih byte payload relay tiap 2 detik; counter total reset saat proses restart. VLESS/Trojan memiliki byte usage per akun. SSH menampilkan login yang dapat diatribusikan dari log autentikasi. VMess dicatat agregat karena Xray menangani autentikasi di proses tersendiri; statistik byte per-user VMess belum tersedia.
+
+Batas sesi WebSocket berlaku per proses, bukan lintas instance; gunakan satu instance kecuali ditambahkan penyimpanan limit bersama. Idle timeout dihitung dari aktivitas dua arah dan frame ping/pong, bukan hanya trafik keluar.
 
 Protokol publik berjalan melalui TLS + WebSocket: SSH-WS di `/ssh-ws`, VLESS di `/vless-ws`, Trojan di `/trojan-ws`, dan VMess di `/vmess-ws`. Xray-core v26.3.27 dipin serta checksum-nya diverifikasi di Dockerfile; daftar user VMess disinkronkan secara dinamis. Dokumentasi Xray menandai VMess dan WebSocket transport sebagai deprecated; VLESS lebih disarankan untuk penggunaan baru, tetapi VMess dipertahankan demi kompatibilitas klien. UDP tidak diteruskan lewat node egress.
 

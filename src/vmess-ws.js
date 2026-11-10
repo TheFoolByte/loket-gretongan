@@ -2,7 +2,7 @@
 
 const WebSocket = require('ws');
 
-function attachVmess(client, { port, path = '/vmess', maxQueuedBytes = 1024 * 1024, stats = null } = {}) {
+function attachVmess(client, { port, path = '/vmess', maxQueuedBytes = 1024 * 1024, stats = null, onActivity = () => {} } = {}) {
   if (!Number.isInteger(Number(port)) || Number(port) < 1) throw new Error('VMess inbound port is required');
   const upstream = new WebSocket(`ws://127.0.0.1:${Number(port)}${path}`, {
     handshakeTimeout: 5000,
@@ -27,6 +27,7 @@ function attachVmess(client, { port, path = '/vmess', maxQueuedBytes = 1024 * 10
   };
 
   const sendUpstream = (data, isBinary) => {
+    onActivity();
     countBytes('vmessRx', data);
     if (upstream.readyState === WebSocket.OPEN) {
       upstream.send(data, { binary: isBinary }, (err) => { if (err) closeBoth(1011, 'VMess relay error'); });
@@ -49,6 +50,7 @@ function attachVmess(client, { port, path = '/vmess', maxQueuedBytes = 1024 * 10
     queuedBytes = 0;
   });
   upstream.on('message', (data, isBinary) => {
+    onActivity();
     countBytes('vmessTx', data);
     if (client.readyState === WebSocket.OPEN) {
       client.send(data, { binary: isBinary }, (err) => { if (err) closeBoth(1011, 'VMess relay error'); });

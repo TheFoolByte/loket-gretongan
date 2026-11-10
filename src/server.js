@@ -32,6 +32,7 @@ const { parseRawProxies, scanAndFilter } = require('./scanner');
 const { pullFreshProxies } = require('./pull');
 const { XrayVmessManager, buildVmessUri } = require('./xray-vmess');
 const { attachVmess } = require('./vmess-ws');
+const { SessionLimiter, installIdleTimeout } = require('./session-limits');
 const { normalizeDomain, normalizePublicHost, hostForNode, matchWildcardHost } = require('./wildcard');
 
 const CONFIG = {
@@ -54,6 +55,10 @@ const CONFIG = {
   signupPerIp: Number(process.env.SIGNUP_PER_IP || 2),
   signupDaily: Number(process.env.SIGNUP_DAILY || 40),
   signupMaxDays: Number(process.env.SIGNUP_MAX_DAYS || 7),
+  wsMaxConnections: process.env.WS_MAX_CONNECTIONS,
+  wsMaxPerIp: process.env.WS_MAX_PER_IP,
+  wsMaxPerUser: process.env.WS_MAX_PER_USER,
+  wsIdleTimeoutMs: process.env.WS_IDLE_TIMEOUT_MS,
   dropbearLog: process.env.DROPBEAR_LOG || '/data/dropbear.log',
 };
 
@@ -130,6 +135,11 @@ const stats = {
   startedAt: Date.now(), rx: 0, tx: 0, vlessRx: 0, vlessTx: 0, trojanRx: 0, trojanTx: 0,
   sshRx: 0, sshTx: 0, vmessRx: 0, vmessTx: 0, activeSsh: 0, activeWs: 0, perIp: new Map(),
 };
+const sessionLimiter = new SessionLimiter({
+  maxGlobal: CONFIG.wsMaxConnections,
+  maxPerIp: CONFIG.wsMaxPerIp,
+  maxPerUser: CONFIG.wsMaxPerUser,
+});
 
 // ---------------------------------------------------------------- helpers
 
@@ -572,21 +582,35 @@ server.on('upgrade', (req, socket, head) => {
     socket.destroy();
     return;
   }
-  wss.handleUpgrade(req, socket, head, (ws) => {
-    stats.activeWs += 1;
-    let counted = true;
-    const releaseWs = () => {
-      if (!counted) return;
+  const reservation = sessionLimiter.reserve(ip);
+  if (!reservation.ok) {
+    const status = reservation.reason === 'ip' ? '429 Too Many Requests' : '503 Service Unavailable';
+    socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nRetry-After: 10\r\nContent-Length: 0\r\n\r\n`);
+    return;
+  }
+  let counted = false;
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    reservation.release();
+    if (counted) {
       counted = false;
       stats.activeWs = Math.max(0, stats.activeWs - 1);
-    };
-    ws.once('close', releaseWs);
-    ws.once('error', releaseWs);
+    }
+  };
+  socket.once('close', release);
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    stats.activeWs += 1;
+    counted = true;
+    ws.once('close', release);
+    ws.once('error', release);
+    const onActivity = installIdleTimeout(ws, CONFIG.wsIdleTimeoutMs);
     if (route.kind === 'ssh') {
       usage.recordAuth({ username: null, protocol: 'ssh', ip });
-      attachSsh(ws, { ip, targetHost: CONFIG.sshHost, targetPort: CONFIG.sshPort, stats });
+      attachSsh(ws, { ip, targetHost: CONFIG.sshHost, targetPort: CONFIG.sshPort, stats, onActivity });
     } else if (route.kind === 'vmess') {
-      attachVmess(ws, { port: vmessManager.portFor(route.node?.id), path: CONFIG.vmessInternalPath, stats });
+      attachVmess(ws, { port: vmessManager.portFor(route.node?.id), path: CONFIG.vmessInternalPath, stats, onActivity });
     } else {
       const egress = route.node ? route.node.proxy : null;
       attachVless(ws, {
@@ -594,8 +618,13 @@ server.on('upgrade', (req, socket, head) => {
         users,
         stats,
         egress,
+        onActivity,
         isBlocked: (name) => usage.isUserBlocked(name),
-        onAuth: ({ username }) => usage.recordAuth({ username, protocol: route.kind, ip }),
+        onAuth: ({ username }) => {
+          if (!reservation.attachUser(username)) return false;
+          usage.recordAuth({ username, protocol: route.kind, ip });
+          return true;
+        },
         onUsage: ({ username, bytesIn, bytesOut }) => usage.recordBytes({ username, protocol: route.kind, bytesIn, bytesOut }),
         connect: (opts) => openEgress({ proxyUrl: egress, host: opts.host, port: opts.port }),
       });

@@ -14,9 +14,10 @@ class TestSocket extends EventEmitter {
     this.OPEN = 1;
     this.readyState = 1;
     this.sent = [];
+    this.closeInfo = null;
   }
   send(data) { this.sent.push(Buffer.from(data)); }
-  close() { this.readyState = 3; this.emit('close'); }
+  close(code, reason) { this.closeInfo = { code, reason }; this.readyState = 3; this.emit('close'); }
 }
 
 (async () => {
@@ -49,7 +50,22 @@ class TestSocket extends EventEmitter {
     }
     assert.equal(Buffer.concat(ws.sent).toString('hex'), expected.toString('hex'), `relay frames: ${ws.sent.map((data) => data.toString('hex')).join(',')}`);
     assert.ok(counters.vlessRx >= header.length, 'VLESS client-to-service bytes are counted by protocol');
-    assert.ok(counters.vlessTx >= Buffer.byteLength('ping'), 'VLESS service-to-client bytes are counted by protocol');
+    assert.ok(counters.vlessTx >= Buffer.byteLength('ping'), 'VLESS service-to-client payload is counted by protocol');
+
+    const rejected = new TestSocket();
+    let rejectedConnects = 0;
+    attachVless(rejected, {
+      kind: 'vless',
+      users: { findByUuid: () => ({ username: 'test' }) },
+      stats: {},
+      log: { warn() {}, error() {} },
+      onAuth: () => false,
+      connect: () => { rejectedConnects += 1; throw new Error('must not connect'); },
+    });
+    rejected.emit('message', header);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(rejected.readyState, 3, 'relay closes a user session rejected by the limiter');
+    assert.equal(rejectedConnects, 0, 'limited session never starts an egress connection');
     console.log('upstream relay startup: all assertions passed');
   } finally {
     ws.close();

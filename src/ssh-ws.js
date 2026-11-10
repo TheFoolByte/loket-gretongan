@@ -7,9 +7,9 @@
 
 const net = require('node:net');
 
-const MAX_PER_IP = Number(process.env.SSH_WS_MAX_PER_IP || 6);
+const MAX_PER_IP = Number(process.env.SSH_WS_MAX_PER_IP || process.env.WS_MAX_PER_IP || 6);
 
-function attachSsh(ws, { ip = 'unknown', targetHost, targetPort, stats, log = console }) {
+function attachSsh(ws, { ip = 'unknown', targetHost, targetPort, stats, log = console, onActivity = () => {} }) {
   const clientIp = String(ip || 'unknown');
   const open = (stats.perIp.get(clientIp) || 0) + 1;
   if (open > MAX_PER_IP) {
@@ -44,12 +44,14 @@ function attachSsh(ws, { ip = 'unknown', targetHost, targetPort, stats, log = co
   };
 
   socket.on('data', (data) => {
+    onActivity();
     stats.sshTx += data.length;
     if (ws.readyState === ws.OPEN) ws.send(data);
   });
   socket.on('error', finish);
   socket.on('close', finish);
   ws.on('message', (msg) => {
+    onActivity();
     stats.sshRx += msg.length;
     if (!socket.destroyed) socket.write(Buffer.from(msg));
   });
