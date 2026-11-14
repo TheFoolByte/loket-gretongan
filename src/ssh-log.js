@@ -1,8 +1,8 @@
 /**
  * Dropbear auth tap.
  *
- * SSH over the Railway TCP proxy never touches the web tier, so the only way to
- * attribute it is dropbear's own log. entrypoint.sh redirects dropbear to
+ * Raw SSH/TCP ingress bypasses the web tier, so the only way to attribute a
+ * login is dropbear's own log. entrypoint.sh redirects dropbear to
  * $DATA_DIR/dropbear.log; this module tails it and reports successful logins.
  */
 'use strict';

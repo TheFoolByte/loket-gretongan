@@ -197,7 +197,9 @@ function roundTrip(socket, payload = 'ping') {
     ]));
     assert.equal(nodes.length, 1, 'invalid and duplicate node ids dropped');
     assert.equal(nodes[0].id, 'sg');
-    assert.equal(loadNodes('').length, 0, 'empty env = direct only');
+    assert.equal(loadNodes('[]').length, 0, 'explicit empty env = direct only');
+    const bundledFallback = loadNodes('', path.join(os.tmpdir(), 'loket-nodes-no-file.json'));
+    assert.ok(bundledFallback.length > 0, 'bundled registry remains available as last-resort fallback');
     assert.equal(loadNodes('not json', path.join(os.tmpdir(), 'loket-nodes-none.json')).length, 0, 'broken json ignored');
 
     // nodes.json on the volume wins over the NODES env
@@ -208,6 +210,7 @@ function roundTrip(socket, payload = 'ping') {
     const fromFile = loadNodes('not json', path.join(nodeDir, 'nodes.json'));
     assert.equal(fromFile.length, 1, 'nodes file loads even when env is broken');
     assert.equal(fromFile[0].id, 'my');
+    assert.equal(loadNodes('[]', path.join(nodeDir, 'nodes.json')).length, 0, 'explicit direct-only env overrides mounted node file');
     const fromEnv = loadNodes('[{"id":"us","name":"United States","flag":"US"}]', path.join(nodeDir, 'missing.json'));
     assert.equal(fromEnv.length, 1, 'env fallback when nodes file is absent');
     assert.equal(fromEnv[0].id, 'us');

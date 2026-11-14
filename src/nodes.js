@@ -3,8 +3,8 @@
  *
  *   NODES=[{"id":"sg","name":"Singapore","flag":"🇸🇬","proxy":"socks5://user:pass@1.2.3.4:1080"}]
  *
- * Only proxies the operator owns or rents belong here. No credentials are
- * shipped with the image; an empty list means "direct only".
+ * Source order is persistent file, NODES environment, then bundled fallback;
+ * explicit NODES=[] overrides all sources for direct-only operation.
  */
 'use strict';
 
@@ -19,7 +19,8 @@ const ID_RE = /^[a-z0-9-]{2,32}$/;
  * Node sources (raw JSON arrays), first non-empty wins:
  *   1. file — $DATA_DIR/nodes.json (or NODES_FILE). Lives on the volume,
  *      survives deploys, suits long region lists.
- *   2. NODES env — quick start, one-line lists.
+ *   2. NODES env — quick start, one-line lists; an explicit [] disables all nodes.
+ *   3. bundled nodes.verified.json — compatibility fallback for existing installs.
  */
 function loadNodes(raw = process.env.NODES, file = process.env.NODES_FILE || path.join(process.env.DATA_DIR || '/data', 'nodes.json')) {
   let parsed = null;
@@ -27,17 +28,10 @@ function loadNodes(raw = process.env.NODES, file = process.env.NODES_FILE || pat
     parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (!Array.isArray(parsed) || parsed.length === 0) parsed = null;
   } catch {
-    /* no nodes file -> fall back to default verified */
-    try {
-      const fallback = path.join(__dirname, '..', 'nodes.verified.json');
-      parsed = JSON.parse(fs.readFileSync(fallback, 'utf8'));
-      if (!Array.isArray(parsed) || parsed.length === 0) parsed = null;
-    } catch {
-      /* ignore */
-    }
+    /* no persisted nodes file -> check the environment next */
   }
-  if (parsed === null) {
-    if (!raw || !raw.trim()) return [];
+  if (typeof raw === 'string' && raw.trim() === '[]') parsed = [];
+  if (parsed === null && typeof raw === 'string' && raw.trim()) {
     try {
       parsed = JSON.parse(raw);
     } catch {
@@ -45,6 +39,16 @@ function loadNodes(raw = process.env.NODES, file = process.env.NODES_FILE || pat
       return [];
     }
   }
+  if (parsed === null) {
+    try {
+      const fallback = path.join(__dirname, '..', 'nodes.verified.json');
+      parsed = JSON.parse(fs.readFileSync(fallback, 'utf8'));
+      if (!Array.isArray(parsed) || parsed.length === 0) parsed = null;
+    } catch {
+      /* no bundled fallback available -> direct-only */
+    }
+  }
+  if (parsed === null) return [];
   if (!Array.isArray(parsed)) {
     console.error('[loket] nodes must be a JSON array — ignoring');
     return [];

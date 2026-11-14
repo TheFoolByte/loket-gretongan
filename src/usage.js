@@ -60,6 +60,7 @@ class Usage {
         lastIp: null,
         ssh: { bytesIn: 0, bytesOut: 0, logins: 0, lastAt: null },
         vless: { bytesIn: 0, bytesOut: 0, sessions: 0, lastAt: null },
+        vmess: { bytesIn: 0, bytesOut: 0, sessions: 0, lastAt: null },
         trojan: { bytesIn: 0, bytesOut: 0, sessions: 0, lastAt: null },
       };
       this.dirty = true;

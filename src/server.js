@@ -1,12 +1,13 @@
 /**
- * LOKET — single-service gateway for Railway.
+ * LOKET — portable single-container gateway for managed platforms or VPS.
  *
- *   /                     public config generator (rate limited, no password)
+ *   /                     public landing page
+ *   /vpn                  public account generator (rate limited, no password)
  *   /admin                admin monitor (ADMIN_PASS, session + csrf)
  *   /health               liveness
  *   /api/public/signup    create an account, return ready-to-paste configs
  *   /api/admin/*          users + ip monitoring, block/unblock
- *   /ssh-ws /vless-ws /trojan-ws   websocket gateways
+ *   /ssh-ws /vless-ws /trojan-ws /vmess-ws   websocket gateways
  */
 'use strict';
 
@@ -29,6 +30,10 @@ const { loadNodes, probeNode } = require('./nodes');
 const { openEgress } = require('./upstream');
 const { parseRawProxies, scanAndFilter } = require('./scanner');
 const { pullFreshProxies } = require('./pull');
+const { XrayVmessManager, buildVmessUri } = require('./xray-vmess');
+const { attachVmess } = require('./vmess-ws');
+const { SessionLimiter, installIdleTimeout } = require('./session-limits');
+const { normalizeDomain, normalizePublicHost, hostForNode, matchWildcardHost } = require('./wildcard');
 
 const CONFIG = {
   port: Number(process.env.WEB_PORT || process.env.PORT || 8080),
@@ -37,7 +42,11 @@ const CONFIG = {
   sshPath: process.env.SSH_WS_PATH || '/ssh-ws',
   vlessPath: process.env.VLESS_PATH || '/vless-ws',
   trojanPath: process.env.TROJAN_PATH || '/trojan-ws',
-  publicHost: process.env.PUBLIC_HOST || '',
+  vmessPath: process.env.VMESS_PATH || '/vmess-ws',
+  vmessInternalPath: process.env.VMESS_INTERNAL_PATH || '/vmess',
+  wildcardDomain: normalizeDomain(process.env.WILDCARD_DOMAIN || ''),
+  publicHost: normalizePublicHost(process.env.PUBLIC_HOST || ''),
+  vmessEnabled: process.env.VMESS_ENABLED === '1',
   sshPublicHost: process.env.SSH_PUBLIC_HOST || '',
   sshPublicPort: process.env.SSH_PUBLIC_PORT || '',
   adminPassword: process.env.ADMIN_PASS || '',
@@ -46,6 +55,10 @@ const CONFIG = {
   signupPerIp: Number(process.env.SIGNUP_PER_IP || 2),
   signupDaily: Number(process.env.SIGNUP_DAILY || 40),
   signupMaxDays: Number(process.env.SIGNUP_MAX_DAYS || 7),
+  wsMaxConnections: process.env.WS_MAX_CONNECTIONS,
+  wsMaxPerIp: process.env.WS_MAX_PER_IP,
+  wsMaxPerUser: process.env.WS_MAX_PER_USER,
+  wsIdleTimeoutMs: process.env.WS_IDLE_TIMEOUT_MS,
   dropbearLog: process.env.DROPBEAR_LOG || '/data/dropbear.log',
 };
 
@@ -62,24 +75,32 @@ const usage = new Usage({ dataDir: process.env.DATA_DIR || '/data' });
 const adminHash = hashPassword(CONFIG.adminPassword);
 const nodesFilePath = process.env.NODES_FILE || path.join(process.env.DATA_DIR || '/data', 'nodes.json');
 
-// One-shot seed: NODES_SEED=1 copies the bundled node list onto the volume.
-// Remove the variable afterwards so rescans stay authoritative.
-if (process.env.NODES_SEED === '1') {
-  try {
-    const bundled = fs.readFileSync(path.join(__dirname, '..', 'nodes.verified.json'), 'utf8');
-    fs.writeFileSync(nodesFilePath, bundled);
-    console.log(`[loket] nodes seeded from bundle -> ${nodesFilePath}`);
-  } catch (err) {
-    console.error(`[loket] node seed failed: ${err.message}`);
-  }
-}
-
 let nodes = loadNodes();
 let nodeById = new Map(nodes.map((n) => [n.id, n]));
 
-function reloadNodes() {
+const vmessManager = new XrayVmessManager({
+  enabled: CONFIG.vmessEnabled,
+  apiPort: Number(process.env.VMESS_API_PORT || 10085),
+  portBase: Number(process.env.VMESS_PORT_BASE || 15000),
+  wsPath: CONFIG.vmessInternalPath,
+  onFatal: (err) => {
+    console.error(`[loket] Xray fatal: ${err.message}`);
+    if (server.listening) process.exit(1);
+  },
+});
+
+function activeVmessUsers() {
+  return users.list().filter((u) => u.active && !usage.isUserBlocked(u.username));
+}
+
+function syncVmess(options = {}) {
+  return vmessManager.sync(activeVmessUsers(), nodes, options);
+}
+
+async function reloadNodes() {
   nodes = loadNodes();
   nodeById = new Map(nodes.map((n) => [n.id, n]));
+  if (CONFIG.vmessEnabled) await syncVmess({ forceRestart: true });
 }
 
 /**
@@ -105,24 +126,34 @@ async function performPull({ limit, concurrency, maxLatencyMs } = {}) {
 
   fs.mkdirSync(path.dirname(nodesFilePath), { recursive: true });
   fs.writeFileSync(nodesFilePath, JSON.stringify(final, null, 2) + '\n', { mode: 0o600 });
-  reloadNodes();
+  await reloadNodes();
 
   return { fetched: result.total, live: result.live, added, total: final.length, bySource: result.bySource };
 }
 
-const stats = { startedAt: Date.now(), rx: 0, tx: 0, sshRx: 0, sshTx: 0, activeSsh: 0, perIp: new Map() };
+const stats = {
+  startedAt: Date.now(), rx: 0, tx: 0, vlessRx: 0, vlessTx: 0, trojanRx: 0, trojanTx: 0,
+  sshRx: 0, sshTx: 0, vmessRx: 0, vmessTx: 0, activeSsh: 0, activeWs: 0, perIp: new Map(),
+};
+const sessionLimiter = new SessionLimiter({
+  maxGlobal: CONFIG.wsMaxConnections,
+  maxPerIp: CONFIG.wsMaxPerIp,
+  maxPerUser: CONFIG.wsMaxPerUser,
+});
 
 // ---------------------------------------------------------------- helpers
 
 /**
  * Resolve the client address.
  *
- * Railway's edge appends the real client to X-Forwarded-For, so the *last*
- * entry is the one we can trust; anything the client sent sits to its left.
- * (Reading [0] — as before — recorded the internal 100.64.x.x hop and made IP
- * blocks useless.)
+ * Behind a trusted reverse proxy, use the final public address appended to the
+ * forwarded chain. On direct VPS ingress, TRUST_PROXY=0 ignores all forwarded
+ * headers so clients cannot spoof IP-based limits or blocklists.
  */
 function clientIp(req) {
+  if (!CONFIG.behindProxy) {
+    return (req.socket.remoteAddress || 'unknown').replace(/^::ffff:/, '');
+  }
   const chain = String(req.headers['x-forwarded-for'] || '')
     .split(',')
     .map((s) => s.trim())
@@ -214,25 +245,32 @@ const randomPassword = () => crypto.randomBytes(9).toString('base64url');
 /** Everything a client needs, derived from one record. */
 function buildConfig(record, password, nodeId = '') {
   const node = nodeId ? nodeById.get(nodeId) : null;
-  const vlessPath = node ? `${CONFIG.vlessPath}-${node.id}` : CONFIG.vlessPath;
-  const trojanPath = node ? `${CONFIG.trojanPath}-${node.id}` : CONFIG.trojanPath;
-  const suffix = node ? `-${node.id}` : '';
-  const host = CONFIG.publicHost || 'localhost';
-  const sshHost = CONFIG.sshPublicHost || host;
+  const baseHost = hostForNode('', CONFIG.wildcardDomain, CONFIG.publicHost);
+  const host = hostForNode(node?.id || '', CONFIG.wildcardDomain, CONFIG.publicHost);
+  const nodeHost = Boolean(node && CONFIG.wildcardDomain && host !== baseHost);
+  const suffix = node && !nodeHost ? `-${node.id}` : '';
+  const vlessPath = `${CONFIG.vlessPath}${suffix}`;
+  const trojanPath = `${CONFIG.trojanPath}${suffix}`;
+  const vmessPath = `${CONFIG.vmessPath}${suffix}`;
+  const sshHost = CONFIG.sshPublicHost || baseHost;
   const sshPort = CONFIG.sshPublicPort || '22';
   const q = (s) => encodeURIComponent(s);
-  return {
+  const result = {
     username: record.username,
     password,
     uuid: record.uuid,
     trojanSecret: record.trojanSecret,
     expired: record.expired,
-    sshCommand: `ssh ${record.username}@${sshHost} -p ${sshPort}`,
-    sshWs: `host=${host} port=443 tls=on path=${CONFIG.sshPath} user=${record.username} pass=${password}`,
+    sshCommand: CONFIG.sshPublicHost && CONFIG.sshPublicPort ? `ssh ${record.username}@${sshHost} -p ${sshPort}` : null,
+    sshWs: `host=${baseHost} port=443 tls=on path=${CONFIG.sshPath} user=${record.username} pass=${password}`,
     node: node ? { id: node.id, name: node.name, flag: node.flag } : null,
     vless: `vless://${record.uuid}@${host}:443?encryption=none&security=tls&sni=${host}&type=ws&host=${host}&path=${q(vlessPath)}#loket-${record.username}${suffix}`,
     trojan: `trojan://${record.trojanSecret}@${host}:443?security=tls&sni=${host}&type=ws&host=${host}&path=${q(trojanPath)}#loket-${record.username}${suffix}`,
   };
+  if (CONFIG.vmessEnabled) {
+    result.vmess = buildVmessUri({ uuid: record.uuid, username: record.username, host, path: vmessPath, label: node?.name || 'direct' });
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------- server
@@ -242,92 +280,35 @@ const server = http.createServer(async (req, res) => {
   const pathname = url.pathname;
   const ip = clientIp(req);
 
-  if (pathname === '/health') return json(res, 200, { ok: true, uptime: Math.floor((Date.now() - stats.startedAt) / 1000) });
-
-  // ---- public proxy check endpoint ----
-  if (pathname === '/api/check-proxy' && req.method === 'GET') {
-    const pIp = url.searchParams.get('ip');
-    const pPort = url.searchParams.get('port');
-    if (!pIp || !pPort) return json(res, 400, { error: 'Missing params' });
-    try {
-      const result = await probeNode({ proxy: `http://${pIp}:${pPort}` });
-      return json(res, 200, { 
-        status: result.ok ? 'Active' : 'Offline', 
-        ping_ms: result.ms 
-      });
-    } catch (e) {
-      return json(res, 200, { status: 'Offline', error: e.message });
-    }
+  const adminPath = pathname === '/admin' || pathname === '/api/login' || pathname === '/api/logout' || pathname === '/api/me' || pathname.startsWith('/api/admin/');
+  if (usage.isIpBlocked(ip) && pathname !== '/health' && pathname !== '/api/public/signup' && !adminPath) {
+    return json(res, 403, { error: 'ip blocked' });
   }
 
-  // ---- public config endpoint (argo-node full parity) ----
+  if (pathname === '/health') return json(res, 200, { ok: true, uptime: Math.floor((Date.now() - stats.startedAt) / 1000) });
+
+  // Demo credentials are deliberately not generated; clients use real accounts.
   if (pathname === '/api/config' && req.method === 'GET') {
-    const host = req.headers.host || CONFIG.publicHost || 'localhost';
-    const nodeId = url.searchParams.get('node') || '';
-    const bug = url.searchParams.get('bug') || '';
-    const sec = url.searchParams.get('sec') || 'tls'; // 'tls' or 'none'
-    const isTls = sec === 'tls';
-    const port = isTls ? 443 : 80;
-    
-    const node = nodeId ? nodeById.get(nodeId) : null;
-    const vlessPath = node ? `${CONFIG.vlessPath}-${node.id}` : CONFIG.vlessPath;
-    const trojanPath = node ? `${CONFIG.trojanPath}-${node.id}` : CONFIG.trojanPath;
-    const q = (s) => encodeURIComponent(s);
-    
-    // Fallback or demo UUID/Secret if not logged in
-    const defaultUuid = 'c0a80101-0000-4000-8000-000000000001';
-    const defaultSecret = 'loketsecret';
-    const nodeTag = node ? `-${node.id.toUpperCase()}` : '-DIRECT';
-    const connectHost = bug || host;
-
-    // VMESS JSON Payload (CF CDN format)
-    const vmessPayload = {
-      v: '2',
-      ps: `LOKET${nodeTag}-VMESS`,
-      add: connectHost,
-      port: port,
-      id: defaultUuid,
-      aid: '0',
-      scy: 'auto',
-      net: 'ws',
-      type: 'none',
-      host: host,
-      path: vlessPath,
-      tls: isTls ? 'tls' : '',
-      sni: isTls ? (bug || host) : '',
-      alpn: '',
-      fp: 'firefox',
-    };
-    const vmessLink = `vmess://${Buffer.from(JSON.stringify(vmessPayload)).toString('base64')}`;
-
-    const tlsParam = isTls ? `&security=tls&sni=${q(bug || host)}&fp=firefox` : '&security=none';
-
-    return json(res, 200, {
-      host,
-      node: node ? { id: node.id, name: node.name, flag: node.flag } : null,
-      native: {
-        vless: `vless://${defaultUuid}@${connectHost}:${port}?encryption=none${tlsParam}&type=ws&host=${q(host)}&path=${q(vlessPath)}#LOKET${nodeTag}-VLESS`,
-        trojan: `trojan://${defaultSecret}@${connectHost}:${port}?${tlsParam.slice(1)}&type=ws&host=${q(host)}&path=${q(trojanPath)}#LOKET${nodeTag}-TROJAN`,
-      },
-      argo: {
-        vless: `vless://${defaultUuid}@${connectHost}:${port}?encryption=none${tlsParam}&type=ws&host=${q(host)}&path=${q(vlessPath)}#LOKET${nodeTag}-CDN-VLESS`,
-        vmess: vmessLink,
-        trojan: `trojan://${defaultSecret}@${connectHost}:${port}?${tlsParam.slice(1)}&type=ws&host=${q(host)}&path=${q(trojanPath)}#LOKET${nodeTag}-CDN-TROJAN`,
-      },
-    });
+    return json(res, 410, { error: 'Konfigurasi demo dihentikan. Buat akun melalui /vpn agar kredensialnya valid.' });
   }
 
   if (pathname === '/' && req.method === 'GET') {
-    return html(res, 200, dashboardPage());
+    return html(res, 200, dashboardPage({ nodeCount: nodes.length, vmessEnabled: CONFIG.vmessEnabled }));
   }
 
   if (pathname === '/vpn' && req.method === 'GET') {
     return html(res, 200, publicPage({
-      host: CONFIG.publicHost,
-      sshHost: CONFIG.sshPublicHost || CONFIG.publicHost,
-      sshPort: CONFIG.sshPublicPort || '22',
-      limits: { perIp: CONFIG.signupPerIp },
-      nodes: nodes.map((n) => ({ id: n.id, name: n.name, flag: n.flag, cc: n.cc || n.flag, proxy: n.proxy || '' })),
+      host: hostForNode('', CONFIG.wildcardDomain, CONFIG.publicHost),
+      wildcardDomain: CONFIG.wildcardDomain,
+      vmessEnabled: CONFIG.vmessEnabled,
+      limits: { perIp: CONFIG.signupPerIp, maxDays: CONFIG.signupMaxDays },
+      nodes: nodes.map((n) => ({
+        id: n.id,
+        name: n.name,
+        flag: n.flag,
+        cc: n.cc || n.flag,
+        host: hostForNode(n.id, CONFIG.wildcardDomain, CONFIG.publicHost),
+      })),
     }));
   }
 
@@ -348,18 +329,31 @@ const server = http.createServer(async (req, res) => {
       return json(res, 400, { error: 'bad request' });
     }
 
+    const nodeId = String(body.node || '').toLowerCase().trim();
+    if (nodeId && !nodeById.has(nodeId)) return json(res, 400, { error: 'node tidak tersedia' });
     const wanted = String(body.username || '').toLowerCase().trim();
     const username = wanted || randomName();
-    const days = Math.min(Math.max(Number(body.days) || 1, 1), CONFIG.signupMaxDays);
+    const requestedDays = Number(body.days);
+    const days = Number.isInteger(requestedDays) && requestedDays > 0
+      ? Math.min(requestedDays, CONFIG.signupMaxDays)
+      : CONFIG.signupMaxDays;
     const password = randomPassword();
 
+    let created = null;
     try {
-      const created = users.create({ username, password, days });
+      created = users.create({ username, password, days });
+      await syncVmess();
       usage.recordSignup({ username: created.username, ip });
-      const cfg = buildConfig({ ...created, password }, password, String(body.node || '').toLowerCase().trim());
+      const cfg = buildConfig({ ...created, password }, password, nodeId);
       const qr = { vless: await qrSvg(cfg.vless), trojan: await qrSvg(cfg.trojan) };
+      if (cfg.vmess) qr.vmess = await qrSvg(cfg.vmess);
       return json(res, 201, { account: cfg, qr });
     } catch (err) {
+      if (created && CONFIG.vmessEnabled) {
+        try { users.remove(created.username); await syncVmess(); } catch { /* keep public error generic */ }
+        console.error(`[loket] VMess account sync failed for ${created.username}`);
+        return json(res, 503, { error: 'Layanan VMess sedang tidak siap; akun belum dibuat. Coba lagi nanti.' });
+      }
       return json(res, 400, { error: err.message });
     }
   }
@@ -404,10 +398,17 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, {
       uptime: Math.floor((Date.now() - stats.startedAt) / 1000),
       activeSsh: stats.activeSsh,
+      activeWs: stats.activeWs,
       rx: stats.rx,
       tx: stats.tx,
+      vlessRx: stats.vlessRx,
+      vlessTx: stats.vlessTx,
+      trojanRx: stats.trojanRx,
+      trojanTx: stats.trojanTx,
       sshRx: stats.sshRx,
       sshTx: stats.sshTx,
+      vmessRx: stats.vmessRx,
+      vmessTx: stats.vmessTx,
       users: users.list().length,
     });
   }
@@ -422,8 +423,8 @@ const server = http.createServer(async (req, res) => {
         ip: rec.lastIp || null,
         lastSeen: rec.lastSeen || null,
         blocked: usage.isUserBlocked(u.username),
-        bytes: { ssh: bytes('ssh'), vless: bytes('vless'), trojan: bytes('trojan') },
-        sessions: { ssh: sessionsOf('ssh'), vless: sessionsOf('vless'), trojan: sessionsOf('trojan') },
+        bytes: { ssh: bytes('ssh'), vless: bytes('vless'), trojan: bytes('trojan'), vmess: bytes('vmess') },
+        sessions: { ssh: sessionsOf('ssh'), vless: sessionsOf('vless'), trojan: sessionsOf('trojan'), vmess: sessionsOf('vmess') },
       };
     });
     return json(res, 200, { users: list, ips: usage.ipReport(100) });
@@ -456,7 +457,7 @@ const server = http.createServer(async (req, res) => {
           proxy: n.proxy,
         }));
         fs.writeFileSync(nodesFilePath, JSON.stringify(cleanNodes, null, 2) + '\n', { mode: 0o600 });
-        reloadNodes();
+        await reloadNodes();
       }
 
       return json(res, 200, {
@@ -487,7 +488,10 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = JSON.parse((await readBody(req)) || '{}');
       if (body.type === 'ip') usage.blockIp(String(body.value), body.block !== false);
-      else if (body.type === 'user') usage.blockUser(String(body.value), body.block !== false);
+      else if (body.type === 'user') {
+        usage.blockUser(String(body.value), body.block !== false);
+        await syncVmess();
+      }
       else return json(res, 400, { error: 'type must be ip or user' });
       return json(res, 200, { ok: true });
     } catch (err) {
@@ -500,7 +504,13 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/users' && req.method === 'POST') {
     try {
       const body = JSON.parse((await readBody(req)) || '{}');
-      return json(res, 201, { user: users.create(body) });
+      const user = users.create(body);
+      try { await syncVmess(); } catch {
+        users.remove(user.username);
+        await syncVmess().catch(() => {});
+        return json(res, 503, { error: 'Xray VMess belum siap; akun tidak dibuat.' });
+      }
+      return json(res, 201, { user });
     } catch (err) {
       return json(res, 400, { error: err.message });
     }
@@ -518,7 +528,9 @@ const server = http.createServer(async (req, res) => {
 
   if ((pathname === '/api/users' || pathname === '/api/admin/users') && req.method === 'DELETE') {
     try {
-      return json(res, 200, { user: users.remove(url.searchParams.get('username')) });
+      const removed = users.remove(url.searchParams.get('username'));
+      await syncVmess();
+      return json(res, 200, { user: removed });
     } catch (err) {
       return json(res, 400, { error: err.message });
     }
@@ -527,23 +539,36 @@ const server = http.createServer(async (req, res) => {
   return json(res, 404, { error: 'not found' });
 });
 
-function resolveRoute(pathname) {
+function resolveRoute(pathname, hostHeader = '') {
+  const hostRoute = matchWildcardHost(hostHeader, CONFIG.wildcardDomain, nodeById);
+  if (hostRoute.invalid) return null;
   if (pathname === CONFIG.sshPath) return { kind: 'ssh', node: null };
-  for (const base of ['vless', 'trojan']) {
-    const basePath = base === 'vless' ? CONFIG.vlessPath : CONFIG.trojanPath;
-    if (pathname === basePath) return { kind: base, node: null };
+
+  let route = null;
+  const paths = [
+    ['vless', CONFIG.vlessPath],
+    ['trojan', CONFIG.trojanPath],
+    ...(CONFIG.vmessEnabled ? [['vmess', CONFIG.vmessPath]] : []),
+  ];
+  for (const [kind, basePath] of paths) {
+    if (pathname === basePath) { route = { kind, node: null }; break; }
     const prefix = `${basePath}-`;
     if (pathname.startsWith(prefix)) {
       const node = nodeById.get(pathname.slice(prefix.length));
-      if (node) return { kind: base, node };
+      if (node) { route = { kind, node }; break; }
     }
   }
-  return null;
+  if (!route) return null;
+  if (hostRoute.matched && hostRoute.node) {
+    if (route.node && route.node.id !== hostRoute.node.id) return null;
+    route.node = hostRoute.node;
+  }
+  return route;
 }
 
 // ------------------------------------------------------------- websockets
 
-const wss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 });
+const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
 
 server.on('upgrade', (req, socket, head) => {
   const ip = clientIp(req);
@@ -552,15 +577,40 @@ server.on('upgrade', (req, socket, head) => {
     return;
   }
   const pathname = new URL(req.url, 'http://localhost').pathname;
-  const route = resolveRoute(pathname);
+  const route = resolveRoute(pathname, req.headers.host || '');
   if (!route) {
     socket.destroy();
     return;
   }
+  const reservation = sessionLimiter.reserve(ip);
+  if (!reservation.ok) {
+    const status = reservation.reason === 'ip' ? '429 Too Many Requests' : '503 Service Unavailable';
+    socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nRetry-After: 10\r\nContent-Length: 0\r\n\r\n`);
+    return;
+  }
+  let counted = false;
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    reservation.release();
+    if (counted) {
+      counted = false;
+      stats.activeWs = Math.max(0, stats.activeWs - 1);
+    }
+  };
+  socket.once('close', release);
   wss.handleUpgrade(req, socket, head, (ws) => {
+    stats.activeWs += 1;
+    counted = true;
+    ws.once('close', release);
+    ws.once('error', release);
+    const onActivity = installIdleTimeout(ws, CONFIG.wsIdleTimeoutMs);
     if (route.kind === 'ssh') {
       usage.recordAuth({ username: null, protocol: 'ssh', ip });
-      attachSsh(ws, { req, targetHost: CONFIG.sshHost, targetPort: CONFIG.sshPort, stats });
+      attachSsh(ws, { ip, targetHost: CONFIG.sshHost, targetPort: CONFIG.sshPort, stats, onActivity });
+    } else if (route.kind === 'vmess') {
+      attachVmess(ws, { port: vmessManager.portFor(route.node?.id), path: CONFIG.vmessInternalPath, stats, onActivity });
     } else {
       const egress = route.node ? route.node.proxy : null;
       attachVless(ws, {
@@ -568,8 +618,13 @@ server.on('upgrade', (req, socket, head) => {
         users,
         stats,
         egress,
+        onActivity,
         isBlocked: (name) => usage.isUserBlocked(name),
-        onAuth: ({ username }) => usage.recordAuth({ username, protocol: route.kind, ip }),
+        onAuth: ({ username }) => {
+          if (!reservation.attachUser(username)) return false;
+          usage.recordAuth({ username, protocol: route.kind, ip });
+          return true;
+        },
         onUsage: ({ username, bytesIn, bytesOut }) => usage.recordBytes({ username, protocol: route.kind, bytesIn, bytesOut }),
         connect: (opts) => openEgress({ proxyUrl: egress, host: opts.host, port: opts.port }),
       });
@@ -587,7 +642,10 @@ tailDropbear({
 
 const sweeper = setInterval(() => {
   const removed = users.pruneExpired();
-  if (removed.length) console.log(`[loket] pruned expired users: ${removed.join(', ')}`);
+  if (removed.length) {
+    console.log(`[loket] pruned expired users: ${removed.join(', ')}`);
+    syncVmess().catch((err) => { console.error(`[loket] VMess expiry sync failed: ${err.message}`); process.exit(1); });
+  }
   usage.resetDailyIfNeeded();
   usage.flush();
   sessions.sweep();
@@ -608,10 +666,14 @@ if (autoPullMinutes > 0) {
   console.log(`[loket] auto-pull every ${autoPullMinutes} min`);
 }
 
-function shutdown(signal) {
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log(`[loket] ${signal} received, shutting down`);
   clearInterval(sweeper);
   usage.flush();
+  await vmessManager.stop().catch(() => {});
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 5000).unref();
 }
@@ -620,11 +682,22 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
 server.on('error', (err) => {
-  console.error(err.code === 'EADDRINUSE' ? `[loket] port ${CONFIG.port} already in use — set WEB_PORT` : `[loket] ${err.message}`);
+  console.error(err.code === 'EADDRINUSE' ? `[loket] port ${CONFIG.port} already in use — set PORT or WEB_PORT` : `[loket] ${err.message}`);
   process.exit(1);
 });
 
-server.listen(CONFIG.port, '0.0.0.0', () => {
-  console.log(`[loket] panel on :${CONFIG.port} (public generator + /admin)`);
-  console.log(`[loket] ssh-ws ${CONFIG.sshPath} · vless ${CONFIG.vlessPath} · trojan ${CONFIG.trojanPath}`);
-});
+async function start() {
+  try {
+    if (CONFIG.vmessEnabled) await vmessManager.start(activeVmessUsers(), nodes);
+    server.listen(CONFIG.port, '0.0.0.0', () => {
+      console.log(`[loket] panel on :${CONFIG.port} (public generator + /admin)`);
+      console.log(`[loket] ssh-ws ${CONFIG.sshPath} · vless ${CONFIG.vlessPath} · trojan ${CONFIG.trojanPath}${CONFIG.vmessEnabled ? ` · vmess ${CONFIG.vmessPath}` : ''}`);
+    });
+  } catch (err) {
+    console.error(`[loket] startup failed: ${err.message}`);
+    await vmessManager.stop().catch(() => {});
+    process.exit(1);
+  }
+}
+
+start();

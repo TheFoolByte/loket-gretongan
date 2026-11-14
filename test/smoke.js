@@ -151,6 +151,17 @@ async function waitReady() {
     // throttle: 4th wrong attempt inside the window must be 429
 
     // ---- public generator ----
+    const publicProbe = await call('GET', '/api/check-proxy?ip=127.0.0.1&port=22');
+    assert.notEqual(publicProbe.status, 200, 'arbitrary public port probes are disabled');
+    const configOutput = await call('GET', '/api/config');
+    assert.equal(configOutput.status, 410, 'demo UUID/secret endpoint is gone');
+    const generatorPage = await call('GET', '/vpn');
+    assert.equal(generatorPage.status, 200, 'generator page is public');
+    assert.ok(generatorPage.data.includes('/api/public/signup'), 'generator submits a real account request');
+    assert.ok(!generatorPage.data.includes('value="vmess"'), 'VMess stays hidden when its backend is disabled');
+    assert.ok(!generatorPage.data.includes('/api/config?'), 'generator does not request demo credentials');
+    assert.ok(!generatorPage.data.includes('/api/check-proxy?'), 'generator does not trigger public proxy scans');
+
     const pub1 = await call('POST', '/api/public/signup', { days: 2 });
     assert.equal(pub1.status, 201, `signup 1: ${JSON.stringify(pub1.data)}`);
     assert.ok(pub1.data.account.vless.startsWith('vless://'), 'vless uri');
@@ -172,6 +183,14 @@ async function waitReady() {
     const overview = await call('GET', '/api/admin/overview');
     assert.equal(overview.status, 200);
     assert.ok(overview.data.users.length >= 2, 'admin sees created users');
+    const stats = await call('GET', '/api/stats');
+    assert.equal(stats.status, 200, 'admin can read live traffic counters');
+    for (const key of ['sshRx', 'sshTx', 'vlessRx', 'vlessTx', 'vmessRx', 'vmessTx', 'trojanRx', 'trojanTx', 'activeWs']) {
+      assert.equal(typeof stats.data[key], 'number', `stats exposes ${key}`);
+    }
+    const adminPage = await call('GET', '/admin');
+    assert.equal(adminPage.status, 200, 'admin dashboard is available after login');
+    assert.ok(adminPage.data.includes('Live bandwidth') && adminPage.data.includes('/api/stats'));
     const withIp = overview.data.users.find((u) => u.ip);
     assert.ok(withIp, 'signup ip recorded');
     assert.ok(overview.data.ips.length >= 1, 'ip report populated');
